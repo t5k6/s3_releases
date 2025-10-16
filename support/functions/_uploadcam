@@ -1,58 +1,56 @@
 #!/bin/bash
 
 upload_cam(){
+	push_error_context "Upload CAM operation"
 	clear
 	slogo
 	local profile_file="$1"
 
+	# Input validation
 	if [ ! -f "$profdir/$profile_file" ]; then
-		log_error "$profile_file $txt_upload_cam1"
-		return 1
+		log_fatal "$profile_file $txt_upload_cam1" "$EXIT_MISSING"
 	else
 		log_info "CONFIG: $g_l$profile_file $txt_upload_cam2"
 	fi
 
-	# Load config after validation
-	source "$profdir/$profile_file"
+	# Load configuration
+	validate_command "Loading profile configuration" source "$profdir/$profile_file"
 
 	local build_binary
 	build_binary=$(find_latest_build_for_profile "$profile_file")
 	if [[ -z "$build_binary" ]]; then
-		log_error "Matching binary not found for profile $profile_file."
-		return 1
+		log_fatal "Matching binary not found for profile $profile_file" "$EXIT_MISSING"
 	fi
 
 	local remote_user_host="${loginname}@${ip}"
 
-	# Output date from cam
+	# Output binary information
 	log_info "CAMNAME: $y_l$build_binary"
 	log_info "FILEDATE: $(stat -c %y "$bdir/$build_binary" | awk '{print $1" " substr($2,1,8)}')"
 
-	# Upload the binary
+	# Upload the binary using abstracted network operations
 	log_header "Uploading $build_binary"
-	if ! scp_upload "$bdir/$build_binary" "$remote_user_host" "$port" "/tmp"; then
-		log_error "Upload failed."
-		return 1
+	if ! validate_command "Uploading binary" net_scp_upload "$bdir/$build_binary" "$remote_user_host" "/tmp" "$port"; then
+		log_fatal "Upload failed" "$EXIT_NETWORK"
 	fi
 	log_info "Upload complete."
 
-	# Stop the remote service
+	# Stop the remote service if requested
 	if [[ "$stop_target" == "y" ]]; then
 		log_header "Stopping remote service"
 		local stop_command="killall -9 $(basename "$targetcam")"
-		if ! ssh_exec "$remote_user_host" "$port" "$stop_command"; then
+		if ! validate_command "Stopping remote service" net_ssh_execute "$remote_user_host" "$stop_command" "$port"; then
 			log_warn "Failed to stop remote service (it may not have been running)."
 		fi
 		log_info "Stop command sent."
 	fi
 
-	# Replace the binary on the remote host
+	# Replace the binary on the remote host if requested
 	if [[ "$replace_target" == "y" ]]; then
 		log_header "Replacing remote binary"
 		# Use here-doc for a clean, readable remote script
 		local replace_script
 		read -r -d '' replace_script << EOF
-set -e
 if [ ! -f "/tmp/$build_binary" ]; then
     echo "Uploaded binary not found on remote." >&2
     exit 1
@@ -64,22 +62,22 @@ mv -f "/tmp/$build_binary" "$targetcam"
 chmod +x "$targetcam"
 echo "Binary replaced successfully."
 EOF
-		if ! ssh_exec "$remote_user_host" "$port" "$replace_script"; then
-			log_error "Failed to replace the remote binary."
-			return 1
+		if ! validate_command "Replacing remote binary" net_ssh_execute "$remote_user_host" "$replace_script" "$port"; then
+			log_fatal "Failed to replace the remote binary" "$EXIT_ERROR"
 		fi
 		log_info "Remote binary replaced."
 	fi
 
-	# Run the post-upload remote command
+	# Run the post-upload remote command if specified
 	if [[ "$remote_command" != "none" ]]; then
 		log_header "Executing remote command"
-		if ! ssh_exec "$remote_user_host" "$port" "$remote_command"; then
-			log_error "Remote command failed."
-			return 1
+		if ! validate_command "Executing remote command" net_ssh_execute "$remote_user_host" "$remote_command" "$port"; then
+			log_fatal "Remote command failed" "$EXIT_ERROR"
 		fi
 		log_info "Remote command executed."
 	fi
 
-	log_info "Upload process completed."
+	log_info "Upload process completed successfully."
+	pop_error_context
+	return 0
 }

@@ -998,15 +998,9 @@ _get_toolchain_properties(){
 
 	props="$compilername;$ranlibname;$includedir;$sysrootdir;$prefixdir;$pkgconfigdir;$hostname;$tc_type;$arch;$bitness;$api;$ssl_target;$cflags;$ldflags;$slice;$size;$opt"
 	echo "$props" | xargs;
-	[ -n "$props" ] && exit 0 || exit 1;
+	[ -n "$props" ] && exit 0 || log_fatal "Failed to get properties" "$EXIT_ERROR"
 };
-_get_toolchain_pkgconfig(){
-	local prefixdir="$1";
-	cd "$prefixdir"
-	pkg=$(find * | grep -m1 "/pkgconfig") && pkgconfigdir="$prefixdir/$pkg" || pkgconfigdir="$prefixdir";
-	echo "$pkgconfigdir" | xargs;
-	[ -n "$pkgconfigdir" ] && exit 0 || exit 1;
-};
+
 _get_toolchain_libs(){
 	local pkgconfigdir="$1" key libs;
 	cd "$pkgconfigdir"
@@ -1044,7 +1038,7 @@ _get_toolchain_libs(){
 	done;
 
 	echo "${libs%?}" | xargs;
-	[ -n "$libs" ] && exit 0 || exit 1;
+	[ -n "$libs" ] && exit 0 || log_fatal "Failed to get toolchain libs" "$EXIT_ERROR"
 };
 _list_toolchain_libkeys(){
 	local tc tcs props compilername pkgconfigdir version key compare libkey libkeys fmt CUR G P R updatable downgradable ADD=11;
@@ -1215,7 +1209,7 @@ _get_template_properties(){
 		[ -z $setup ] && desc="$desc ($arch$cpu$aarch $bitness-bit $endianness, $libc $libcmv$libcv, $cc $ccv, $kernel $kernelv)$props";
 	fi;
 	echo "$desc";
-	[ -n "$desc" ] && exit 0 || exit 1;
+	[ -n "$desc" ] && exit 0 || log_fatal "Failed to get template properties" "$EXIT_ERROR"
 };
 _get_template_type(){
 	if [ -f "$1" ];then

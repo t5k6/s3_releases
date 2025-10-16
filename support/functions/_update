@@ -1,11 +1,12 @@
 #!/bin/bash
 
 update_me(){
+	push_error_context "Update s3 operation"
 	clear;s3logo
 	printf "  s3_git CHECK:\n  -------------\n"
 	local_revision=0
 	online_revision=0
-	check_url "$URL_S3_REPO" || return
+	validate_command "Checking repository URL" check_url "$URL_S3_REPO"
 
 	if [ ! -d $workdir/.git ]; then
 		s3local="$dldir/s3_github"
@@ -45,7 +46,7 @@ update_me(){
 			sleep 1
 
 			if [ $ahead -gt 0 ]; then
-				printf "\n${p_l}STAGE 1: Try pull with reset (forced pushes on remote)...${re_}\n\n"
+				printf "\n${p_l}STAGE 1: Try pull with reset (forced pushes on remote branch)...${re_}\n\n"
 				git reset origin/$GIT_BRANCH --hard
 			else
 				printf "\n${p_l}STAGE 1: Try simple pull (auto-merge)...${re_}\n\n"
@@ -66,6 +67,7 @@ update_me(){
 		fi
 		) |& _log "$logfile"
 	fi
+	pop_error_context
 	sleep 2
 }
 

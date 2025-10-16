@@ -193,4 +193,10 @@ _gui_build(){
 #link log
 	ln -frs "$ldir/$log_name" "$workdir/lastbuild.log"
 	[ -f "$targztmp" ] && rm -rf "$targztmp"
+
+#build error handling - check for errors in log and fail if found
+	error_on_build=$(grep -c1 error "$ldir/$log_name")
+	if [ "$error_on_build" -gt "0" ]; then
+		log_fatal "GUI build failed with errors" "$EXIT_ERROR"
+	fi
 }
