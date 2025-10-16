@@ -251,3 +251,11 @@ log_header() {
     local message="$@"
     printf "$b_l\n=== $message ===$w_l\n"
 }
+
+log_debug() {
+    local message="$@"
+    # Only log debug messages if verbose mode is enabled
+    if [ "${s3cfg_vars[USE_VERBOSE]}" == "1" ]; then
+        printf "$c_l DEBUG: $message$re_\n"
+    fi
+}

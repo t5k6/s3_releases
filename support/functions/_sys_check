@@ -1,132 +1,280 @@
 #!/bin/bash
 
-prerequisites(){
-	failed=0
-	missing="(not found)"
-	[[ $1 ]] && output=": &&" || output="printf";
-	$output "$w_l  CHECK for binaries\n  ==================\n";
+sys_check_binaries() {
+    # Optimized binary checking with caching and reduced find operations
+    err_init "Binary system check"
+    local output_mode="${1:-verbose}"  # verbose/silent/summary
+    local binary_cache="/tmp/s3_binary_cache_$BASHPID"
 
-	for e in "${binvars[@]}"
-	do
-		if [ "$e" == "autoconf-archive" ]
-		then
-			e="autoconf-archive"
-			e1="/usr/share/aclocal/ax_absolute_header.m4"
-			if [ -f $e1 ]
-			then
-				printf -v pad %40s
-				e=$e$pad
-				e=${e:0:16}
-				$output "$w_l  have\t$g_l$e$y_l $e1\n"
-			else
-				failed=1
-				printf -v pad %40s
-				e=$e$pad
-				e=${e:0:16}
-				$output "$r_l  need\t$w_l$e$r_l $missing\n"
-			fi
-		elif hash "$e" 2>/dev/null
-		then
-			einfo=$(type -pf "$e")
-			printf -v pad %40s
-			e=$e$pad
-			e=${e:0:15}
-			$output "$w_l  have\t$g_l$e $y_l$einfo\n"
-		else
-			failed=1
-			printf -v pad %40s
-			e=$e$pad
-			e=${e:0:15}
-			$output "$r_l  need\t$w_l$e $r_l$missing\n"
-		fi
-	done
+    log_header "Checking for required binaries"
 
-	if hash upx 2>/dev/null; then
-		upxversion=($(upx -V | awk 'NR==1 { verok=$2>=3.91; printf "%.2f %i", $2, verok }'));
-		$output "$w_l  have$g_l  upx$y_l\t\t"$w_l"Version$P ${upxversion[0]}";
-		if [ ${upxversion[1]} == 1 ]
-		then
-			$output "$g_l ok\n"
-		else
-			$output "$r_l nok\n"
-			failed=1
-		fi
-	fi
+    # Setup caching to avoid repeated binary detection
+    local cached_bins=""
+    if [ -f "$binary_cache" ]; then
+        cached_bins=$(cat "$binary_cache")
+    fi
 
-	$output " \n $w_l CHECK for headers\n  =================\n"
+    local failed_bins=()
+    local found_bins=()
 
-	for e in "${headervars[@]}"
-	do
-		e1=$(find /usr/include/* /usr/local/include/* 2>/dev/null | grep -wm1 "$e")
-		if [ ${#e1} -gt 8 ]
-		  then
-			printf -v pad %40s
-			e=$e$pad
-			e=${e:0:15}
-			$output "$w_l  have\t$g_l$e$y_l $e1\n"
-		elif [ "$e" == "dvbcsa.h" -a "${s3cfg_vars[INSTALL_NATIVE_LIBDVBCSA]}" == "0" ]
-		  then
-			printf -v pad %40s
-			e=$e$pad
-			e=${e:0:15}
-			$output "$r_l  need\t$w_l$e$r_l (skipped by config)\n"
-		else
-			failed=1
-			printf -v pad %40s
-			e=$e$pad
-			e=${e:0:15}
-			$output "$r_l  need\t$w_l$e$r_l $missing\n"
-		fi
-	done
+    for binary in "${binvars[@]}"; do
+        local binary_path=""
+        local check_result=""
 
-$output " \n $w_l CHECK for libraries\n  ===================\n"
+        # Check cache first
+        if [ -n "$cached_bins" ]; then
+            binary_path=$(echo "$cached_bins" | grep "^$binary:" | cut -d':' -f2)
+        fi
 
-for e in "${libvars[@]}"
-do
-	e1=$(find /usr/lib* 2>/dev/null | grep -m1 "$e")
-	if [ ${#e1} -gt 8 ]
-	then
-		printf -v pad %40s
-		e=$e$pad
-		e=${e:0:15}
-		$output "$w_l  have\t$g_l$e$y_l $e1\n"
-	else
-		failed=1
-		printf -v pad %40s
-		e=$e$pad
-		e=${e:0:15}
-		$output "$r_l  need\t$w_l$e$r_l $missing\n";
-	fi
-done
+        # If not in cache or cache miss, check system
+        if [ -z "$binary_path" ]; then
+            if [ "$binary" = "autoconf-archive" ]; then
+                # Special case for autoconf-archive
+                if [ -f "/usr/share/aclocal/ax_absolute_header.m4" ]; then
+                    binary_path="/usr/share/aclocal/ax_absolute_header.m4"
+                fi
+            else
+                binary_path=$(type -pf "$binary" 2>/dev/null || which "$binary" 2>/dev/null || echo "")
+            fi
+        fi
 
-if [ "$(uname -m)" == "x86_64" ]
-	then
-	$output " \n $w_l CHECK for zlib32\n  ================\n"
-	e="zlib32"
-	e1="/usr/lib/libz.so"
-	e2="/usr/lib32/libz.so.1"
-	if [ -f $e1 ]
-	then
-		printf -v pad %40s
-		e=$e$pad
-		e=${e:0:15}
-		$output "$w_l  have\t$g_l$e$y_l $e1\n"
-	elif [ -f $e2 ]
-		then
-		printf -v pad %40s
-		e=$e$pad
-		e=${e:0:15}
-		$output "$w_l  have\t$g_l$e$y_l $e2\n"
-	else
-		failed=1
-		printf -v pad %40s
-		e=$e$pad
-		e=${e:0:15}
-		$output "$r_l  need\t$w_l$e$r_l $missing\n"
-	fi
-fi
+        if [ -n "$binary_path" ] && [ -x "$binary_path" ]; then
+            printf -v pad %40s
+            binary_display="${binary}${pad}"
+            binary_display="${binary_display:0:16}"
+            sys_check_output "$output_mode" "$w_l  have\t$g_l${binary_display} $y_l$binary_path$re_\n"
+            found_bins+=("$binary:$binary_path")
+        else
+            printf -v pad %40s
+            binary_display="${binary}${pad}"
+            binary_display="${binary_display:0:16}"
+            sys_check_output "$output_mode" "$r_l  need\t$w_l${binary_display} $r_l(not found)$re_\n"
+            failed_bins+=("$binary")
+        fi
+    done
 
-return $failed
+    # Specialized checks (keep these optimized)
+    if command -v upx >/dev/null 2>&1; then
+        local upx_version upx_ok
+        mapfile -t upx_info < <(upx -V | awk 'NR==1{version=$2; ok=($2>=3.91)?1:0; printf "%.2f|%i", version, ok}')
+        upx_version="${upx_info[0]%%|*}"
+        upx_ok="${upx_info[0]##*|}"
+
+        sys_check_output "$output_mode" "$w_l  have$g_l  upx$y_l\t\t$w_l Version: $P ${upx_version}"
+
+        if [ "${upx_ok:-0}" -eq 1 ]; then
+            sys_check_output "$output_mode" "$g_l ok$re_\n"
+        else
+            sys_check_output "$output_mode" "$r_l nok$re_\n"
+            failed_bins+=("upx(version_too_low)")
+        fi
+    fi
+
+    # Cache successful finds
+    printf "%s\n" "${found_bins[@]}" > "$binary_cache"
+
+    # Return failure count
+    echo "${#failed_bins[@]}"
+
+    if [ ${#failed_bins[@]} -gt 0 ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+sys_check_headers() {
+    # Optimized header file checking with reduced filesystem operations
+    err_init "Header system check"
+    local output_mode="${1:-verbose}"  # verbose/silent/summary
+    local header_cache="/tmp/s3_header_cache_$BASHPID"
+
+    sys_check_output "$output_mode" "$w_l\n  CHECK for headers\n  =================$re_\n"
+
+    # Define search paths once
+    local search_paths=("/usr/include" "/usr/local/include")
+    [ -n "${SYSROOT:-}" ] && search_paths+=("${SYSROOT}/usr/include")
+
+    local failed_headers=()
+    local found_headers=()
+
+    for header in "${headervars[@]}"; do
+        local header_found="false"
+        local header_path=""
+
+        # Special handling for dvbcsa.h with config override
+        if [ "$header" = "dvbcsa.h" ] && [ "${s3cfg_vars[INSTALL_NATIVE_LIBDVBCSA]:-1}" = "0" ]; then
+            sys_check_output "$output_mode" "$r_l  need\t$w_l${header} $r_l (skipped by config)$re_\n"
+            failed_headers+=("$header(config_skipped)")
+            continue
+        fi
+
+        # Search for header
+        for include_path in "${search_paths[@]}"; do
+            if [ -f "$include_path/$header" ]; then
+                header_path="$include_path/$header"
+                header_found="true"
+                break
+            fi
+            # Also check subdirectories for complex headers
+            if [ "$header_found" = "false" ]; then
+                header_path=$(find "$include_path" -name "$header" -type f 2>/dev/null | head -1)
+                if [ -n "$header_path" ]; then
+                    header_found="true"
+                    break
+                fi
+            fi
+        done
+
+        printf -v pad %40s
+        header_display="${header}${pad}"
+        header_display="${header_display:0:16}"
+
+        if [ "$header_found" = "true" ] && [ -n "$header_path" ]; then
+            sys_check_output "$output_mode" "$w_l  have\t$g_l${header_display} $y_l$header_path$re_\n"
+            found_headers+=("$header:$header_path")
+        else
+            sys_check_output "$output_mode" "$r_l  need\t$w_l${header_display} $r_l(not found)$re_\n"
+            failed_headers+=("$header")
+        fi
+    done
+
+    # Cache successful finds
+    printf "%s\n" "${found_headers[@]}" > "$header_cache"
+
+    # Return failure count
+    echo "${#failed_headers[@]}"
+
+    if [ ${#failed_headers[@]} -gt 0 ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+sys_check_libraries() {
+    # Optimized library checking with intelligent caching
+    err_init "Library system check"
+    local output_mode="${1:-verbose}"  # verbose/silent/summary
+    local lib_cache="/tmp/s3_lib_cache_$BASHPID"
+
+    sys_check_output "$output_mode" "$w_l\n  CHECK for libraries\n  ===================$re_\n"
+
+    # Define library search patterns intelligently
+    local lib_extensions=("so" "so.*" "a")
+    local lib_paths=()
+    for lib_var in "${libvars[@]}"; do
+        for ext in "${lib_extensions[@]}"; do
+            lib_paths+=("$lib_var.$ext")
+        done
+    done
+
+    local failed_libs=()
+    local found_libs=()
+
+    for lib in "${lib_paths[@]}"; do
+        local lib_found="false"
+        local lib_path=""
+
+        # Use find with more targeted search
+        lib_path=$(find /usr/lib* /usr/local/lib* -name "$lib" -type f 2>/dev/null | head -1)
+        [ -n "${SYSROOT:-}" ] && lib_path="${lib_path:-$(find "${SYSROOT}"/usr/lib* -name "$lib" -type f 2>/dev/null | head -1)}"
+
+        printf -v pad %40s
+        lib_display="${lib}${pad}"
+        lib_display="${lib_display:0:16}"
+
+        if [ -n "$lib_path" ]; then
+            sys_check_output "$output_mode" "$w_l  have\t$g_l${lib_display} $y_l$lib_path$re_\n"
+            found_libs+=("$lib:$lib_path")
+        else
+            sys_check_output "$output_mode" "$r_l  need\t$w_l${lib_display} $r_l(not found)$re_\n"
+            failed_libs+=("$lib")
+        fi
+    done
+
+    # Special x86_64 zlib32 check
+    if [ "$(uname -m)" = "x86_64" ]; then
+        sys_check_output "$output_mode" "$w_l\n  CHECK for zlib32\n  ================$re_\n"
+        local zlib32_found="false"
+        local zlib32_path=""
+
+        if [ -f "/usr/lib/libz.so" ]; then
+            zlib32_path="/usr/lib/libz.so"
+            zlib32_found="true"
+        elif [ -f "/usr/lib32/libz.so.1" ]; then
+            zlib32_path="/usr/lib32/libz.so.1"
+            zlib32_found="true"
+        fi
+
+        if [ "$zlib32_found" = "true" ]; then
+            sys_check_output "$output_mode" "$w_l  have\t$g_l zlib32  $y_l$zlib32_path$re_\n"
+        else
+            sys_check_output "$output_mode" "$r_l  need\t$w_l zlib32  $r_l(not found)$re_\n"
+            failed_libs+=("zlib32")
+        fi
+    fi
+
+    # Cache successful finds
+    printf "%s\n" "${found_libs[@]}" > "$lib_cache"
+
+    # Return failure count
+    echo "${#failed_libs[@]}"
+
+    if [ ${#failed_libs[@]} -gt 0 ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+sys_check_output() {
+    # Centralized output control for system checks
+    local mode="$1"
+    shift
+    local message="$*"
+
+    case "$mode" in
+        "verbose")
+            printf "$message"
+            ;;
+        "silent")
+            :  # No output
+            ;;
+        "summary")
+            # Could collect for later summary output
+            :  # For now, same as silent
+            ;;
+        *)
+            printf "$message"
+            ;;
+    esac
+}
+
+# Legacy function wrapper for backward compatibility
+prerequisites() {
+    local output_mode="verbose"
+    [[ $1 ]] && output_mode=": &&" || output_mode="verbose"  # Handle legacy call pattern
+
+    local total_failures=0
+
+    # Run all checks and accumulate failures
+    local bin_failures="0"
+    bin_failures=$(sys_check_binaries "$output_mode")
+    total_failures=$((total_failures + bin_failures))
+
+    local header_failures="0"
+    header_failures=$(sys_check_headers "$output_mode")
+    total_failures=$((total_failures + header_failures))
+
+    local lib_failures="0"
+    lib_failures=$(sys_check_libraries "$output_mode")
+    total_failures=$((total_failures + lib_failures))
+
+    # Clean up caches
+    rm -f "/tmp/s3_"*"_cache_$BASHPID"
+
+    return $total_failures
 }
 
 # Parameters (all optional):
