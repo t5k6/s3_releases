@@ -1,14 +1,18 @@
 #!/bin/bash
 
 gitcheckout(){
-	echo -en "$c_l"
+	push_error_context "Git checkout operation"
+	log_info "Starting git checkout operation"
 	fc1="$(mktemp)"
 	clear
 	ologo
 	i=0
 	COUNT=0
 
-	check_url "$URL_OSCAM_REPO" || return
+	validate_command "Checking repository URL" check_url "$URL_OSCAM_REPO" || {
+		pop_error_context
+		return 1
+	}
 
 	if [ -d "${repodir}" ]
 	then
@@ -34,15 +38,21 @@ gitcheckout(){
 	_nl
 	[ -f "$ispatched" ] && rm -f "$ispatched"
 	tar_repo
+	pop_error_context
+	return 0
 }
 
 gitup(){
-	printf "$c_l"
+	push_error_context "Git update operation"
+	log_info "Starting git update operation"
 	clear
 	ologo
 	i=1
 
-	check_url "$URL_OSCAM_REPO" || return
+	validate_command "Checking repository URL" check_url "$URL_OSCAM_REPO" || {
+		pop_error_context
+		return 1
+	}
 
 	if [ -d "${repodir}" ]
 	then
@@ -80,6 +90,8 @@ gitup(){
 		reset_="$("${repodir}/config.sh" -R)"
 	fi
 	tar_repo
+	pop_error_context
+	return 0
 }
 
 _dialog_checkout1_git(){

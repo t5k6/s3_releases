@@ -90,7 +90,9 @@ USE_vars[USE_OSCAMNAME]=;
 s3cfg_vars[USE_TARGZ]=0
 s3cfg_vars[DIRECTMENU]=0
 s3cfg_vars[NO_REPO_AUTOUPDATE]=0
-s3cfg_vars[USE_VERBOSE]=0
+# Read S3_LOG_LEVEL with default of 2 if not set
+S3_LOG_LEVEL="${s3cfg_vars[S3_LOG_LEVEL]:-2}"
+s3cfg_vars[S3_LOG_LEVEL]=$S3_LOG_LEVEL
 s3cfg_vars[S3_UPDATE_CHECK]=1
 s3cfg_vars[S3_URL_CHECK]=1
 s3cfg_vars[INSTALL_NATIVE_LIBDVBCSA]=1

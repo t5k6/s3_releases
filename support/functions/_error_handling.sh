@@ -223,9 +223,14 @@ err_setup_traps() {
 }
 
 # ------------------------------------------------------------------------------
-# BACKWARD COMPATIBILITY
+# LOGGING FUNCTIONS
 # ------------------------------------------------------------------------------
-# Map old patterns to new system (for gradual migration)
+# Define log levels
+readonly LOG_LEVEL_FATAL=0
+readonly LOG_LEVEL_ERROR=1
+readonly LOG_LEVEL_WARN=2
+readonly LOG_LEVEL_INFO=3
+readonly LOG_LEVEL_DEBUG=4
 
 log_error() {
     local message="$@"
@@ -238,11 +243,13 @@ log_error() {
 }
 
 log_warn() {
+    (( S3_LOG_LEVEL < LOG_LEVEL_WARN )) && return
     local message="$@"
     printf "$y_l WARNING: $message$re_\n"
 }
 
 log_info() {
+    (( S3_LOG_LEVEL < LOG_LEVEL_INFO )) && return
     local message="$@"
     printf "$g_l INFO: $message$re_\n"
 }
@@ -253,9 +260,23 @@ log_header() {
 }
 
 log_debug() {
+    (( S3_LOG_LEVEL < LOG_LEVEL_DEBUG )) && return
     local message="$@"
-    # Only log debug messages if verbose mode is enabled
-    if [ "${s3cfg_vars[USE_VERBOSE]}" == "1" ]; then
-        printf "$c_l DEBUG: $message$re_\n"
-    fi
+    printf "$c_l DEBUG: $message$re_\n"
+}
+
+# ------------------------------------------------------------------------------
+# LOG FILE MANAGEMENT
+# ------------------------------------------------------------------------------
+
+# Executed a command while capturing all output to a log file.
+# Usage: run_with_logging "/path/to/logfile.log" command arg1 arg2 ...
+run_with_logging() {
+    local log_file="$1"
+    shift
+    # Ensure the logs directory exists
+    mkdir -p "$(dirname "$log_file")"
+    # Execute the command, teeing stdout and stderr to the log file.
+    # The sed command strips ANSI color codes from the file output.
+    { "$@" ; } 2>&1 | tee >(sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >> "$log_file")
 }

@@ -561,21 +561,31 @@ read_s3cfg(){
 	fi
 }
 s3cfg_menu(){
-	unset CFG_MENU
-	declare -a CFG_MENU
-	old_IFS=$IFS
-	COUNT=0
-	found=""
+		unset CFG_MENU
+		declare -a CFG_MENU
+		old_IFS=$IFS
+		COUNT=0
+		found=""
 
-	for e in "${!s3cfg_vars[@]}"
-	do
-		CFG_MENU+="$e#on/off#$([ "${s3cfg_vars[$e]}" -gt "0" ] && echo on || echo off)#"
-		counter
-	done
+		# Special handling for S3_LOG_LEVEL - use radiolist
+		log_levels=("0#Fatal only" "1#Fatal + Error" "2#Fatal + Error + Warn (DEFAULT)" "3#Fatal + Error + Warn + Info" "4#Fatal + Error + Warn + Info + Debug")
+		selected_level=$("$gui" "$st_" "$bt_" "$title_" "$rl_" "Select Log Level" 16 50 5 "${s3cfg_vars[S3_LOG_LEVEL]}" "${log_levels[@]}" 3>&1 1>&2 2>&3)
+		if [ $? -eq 0 ]; then
+			s3cfg_vars[S3_LOG_LEVEL]=$selected_level
+		fi
 
-	IFS="#"
-	erg=$("$gui" "$st_" "$bt_" "$title_" "$cl_" "enable/disable options" 16 45 10 ${CFG_MENU[@]})
-	IFS=$old_IFS
+		# Build checklist for other options
+		for e in "${!s3cfg_vars[@]}"
+		do
+			if [ "$e" != "S3_LOG_LEVEL" ]; then
+				CFG_MENU+="$e#on/off#$([ "${s3cfg_vars[$e]}" -gt "0" ] && echo on || echo off)#"
+				counter
+			fi
+		done
+
+		IFS="#"
+		erg=$("$gui" "$st_" "$bt_" "$title_" "$cl_" "enable/disable options" 16 45 10 ${CFG_MENU[@]})
+		IFS=$old_IFS
 
 	for e1 in "${!s3cfg_vars[@]}"
 	do
@@ -771,6 +781,3 @@ check_url(){
 version(){
 echo -e "${SIMPLEVERSION}.${VERSIONCOUNTER} by ${DEVELOPER}\n- in memory of gorgone -"
 }
-_log(){
-	cat | tee >(sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >>"$1"); #remove ansi colors from output
-};

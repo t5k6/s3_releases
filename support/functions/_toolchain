@@ -222,8 +222,8 @@ _toolchain_check(){
 	then
 		cd "$tcdir/$1/bin"
 	else
-		printf "$r_l  $txt_error:$y_l $1$w_l Toolchain $txt_n_installed""$rs_"
-		_nl
+		log_error "Toolchain '$1' is not installed"
+		log_error_context
 		exit
 	fi
 
@@ -305,8 +305,9 @@ _toolchain_check(){
 }
 
 _toolchain_repair(){
+	push_error_context "Toolchain repair operation"
 	clear
-	printf "$w_l\n"
+	log_info "Starting toolchain repair for: $1"
 	s3logo
 	cd $dldir
 	zzusatz=0
@@ -318,7 +319,8 @@ _toolchain_repair(){
 
 	if [ ${#_md5sum} -lt 1 ]
 	then
-		printf $w_l"  md5sum in $Y$1$w_l config $R$txt_not_found$W\n\n"
+		log_error "MD5 checksum not found in $1 config"
+		pop_error_context
 		exit
 	fi
 
