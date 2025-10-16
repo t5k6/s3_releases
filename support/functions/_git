@@ -144,3 +144,12 @@ gitclone(){
 giturl(){
 	git config --get remote.origin.url
 }
+
+repo_get_git_revision(){
+	if echo "$1" | grep -qocP '^(https?|git@.*)://\S+'
+	then
+		git ls-remote $1 2>/dev/null | head -1 | awk '{print substr($1, 1, 7)}' || echo 0
+	else
+		git -C $1 rev-parse --short HEAD 2>/dev/null || echo 0
+	fi
+}

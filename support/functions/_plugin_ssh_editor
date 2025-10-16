@@ -19,28 +19,27 @@ ssh_editor(){
 	fi
 
 i=0
-config_parts=$($gui $st_ --title "-[ SSH Transfer Setup ]-" --form " " 15 65 8 \
-"loginname      :" 1 1 "$loginname"		1 18 40 39 \
-"password       :" 2 1 "$password"		2 18 40 39 \
-"ip/dyndns      :" 3 1 "$ip"			3 18 40 39 \
-"port           :" 4 1 "$port"			4 18  6  5 \
-"toolchain      :" 5 1 "$toolchain"		5 18 40 39 \
-"targetcam      :" 6 1 "$targetcam"		6 18 40 39 \
-"replace_target :" 7 1 "$replace_target"	7 18  2  2 \
-"stop_target    :" 8 1 "$stop_target"		8 18  2  2 )
+form_items=("loginname:" 1 1 "$loginname" 1 18 40 39
+            "password:" 2 1 "$password" 2 18 40 39
+            "ip/dyndns:" 3 1 "$ip" 3 18 40 39
+            "port:" 4 1 "$port" 4 18 6 5
+            "toolchain:" 5 1 "$toolchain" 5 18 40 39
+            "targetcam:" 6 1 "$targetcam" 6 18 40 39
+            "replace_target:" 7 1 "$replace_target" 7 18 2 2
+            "stop_target:" 8 1 "$stop_target" 8 18 2 2)
+
+config_parts=$(ui_show_form "SSH Transfer Setup" " " 15 65 8 "${form_items[@]}")
 
 return_value=$?
 [ "$return_value" == "1" ] && bye
 [ ! "$return_value" == "0" ] && ssh_editor
 
-remote_command_new=$(
-$gui $st_ --title " -[ Remote Commands ]- " --inputbox '' 7 60 "$remote_command")
+remote_command_new=$(ui_get_input "Remote Commands" "" "$remote_command" 7 60)
 return_value=$?
 [ "$return_value" == "1" ] && bye
 [ ! "$return_value" == "0" ] && ssh_editor
 
-config_file_name=$(
-$gui $st_ --title " -[ $txt_ssh_profiles $txt_name ]- " --inputbox "$txt_ssh_profiles $txt_name $txt_example_name" 8 60 $(echo $toolchain| rev))
+config_file_name=$(ui_get_input "$txt_ssh_profiles $txt_name" "$txt_ssh_profiles $txt_name $txt_example_name" "$(echo $toolchain| rev)" 8 60)
 
 return_value=$?;
 [ "$return_value" == "1" ] && bye

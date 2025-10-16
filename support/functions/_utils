@@ -8,16 +8,7 @@ log_warn() { echo -e "${y_l}WARN:${w_l}  $*${re_}"; }
 log_error() { echo -e "${r_l}ERROR:${w_l} $*${re_}"; }
 log_header() { echo -e "${p_l}----- $* -----${re_}"; }
 
-# Wrapper for dialog menus to reduce boilerplate
-# Usage: create_menu "extra_flags" "Menu Title" "Menu Text" height width menu_height "option1" "desc1" "option2" "desc2"
-create_menu() {
-    local extra_flags="$1" title="$2" text="$3" height="$4" width="$5" menu_height="$6"
-    shift 6
-    local options=("$@")
-    local count=$((${#options[@]} / 2))
 
-    "$gui" $extra_flags "$st_" "$bt_" "$title_" --title "$title" --menu "$text" "$height" "$width" "$menu_height" "${options[@]}"
-}
 
 # Securely execute a remote command using SSH keys (preferred)
 # Usage: ssh_exec "user@host" "port" "remote command"

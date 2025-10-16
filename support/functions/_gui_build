@@ -179,13 +179,13 @@ _gui_build(){
 	then
 		rm "$bdir/$oscam_name.debug"
 		printf "\n $txt_delete $oscam_name.debug\n"|tee -a "$ldir/$log_name"
-	fi;) | "$gui" "$st_" --colors --title " -[ Build$(REPOIDENT) ]- " "$pb_" "$_lines" "$_cols"
+	fi;) | ui_show_progressbox "Build $(REPOIDENT)"
 	sleep 2
 
 #tar
 	if [ "${USE_vars[USE_TARGZ]}" == "USE_TARGZ=1" ]
 	then
-		(tar_cam_gui "$oscam_name" "$(cat "$targztmp")") |tee -a "$ldir/$log_name"| "$gui" "$st_" --title " -[ TAR Binary ]- " "$pb_" 10 70
+		(tar_cam_gui "$oscam_name" "$(cat "$targztmp")") |tee -a "$ldir/$log_name"| ui_show_progressbox "TAR Binary" "" 10 70
 		sleep 2
 	fi
 

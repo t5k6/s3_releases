@@ -41,7 +41,7 @@ _update_me_logic() {
 	fi
 }
 
-update_me(){
+sys_update_self(){
 	push_error_context "Update s3 operation"
 	clear;s3logo
 	printf "  s3_git CHECK:\n  -------------\n"
@@ -52,8 +52,8 @@ update_me(){
 	if [ ! -d $workdir/.git ]; then
 		s3local="$dldir/s3_github"
 
-		local_revision=$(gitrevision $s3local)
-		online_revision=$(gitrevision $URL_S3_REPO)
+		local_revision=$(repo_get_git_revision $s3local)
+		online_revision=$(repo_get_git_revision $URL_S3_REPO)
 
 		if [ ! "$local_revision" == "$online_revision" ]
 		then
@@ -73,7 +73,7 @@ update_me(){
 	sleep 2
 }
 
-fix_me(){
+sys_repair_self(){
 	clear
 	s3logo
 	s3local="$dldir/s3_github"

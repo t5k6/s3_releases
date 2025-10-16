@@ -198,10 +198,10 @@ _dialog_checkout(){
 			if [ ! -f "$tcdir/$_toolchainname/bin/$_compiler""gcc" ]
 			then
 				first="$1"
-				_toolchain_gui_install
+				ui_install_toolchain_interactive
 			fi
 			loadprofile="yes"
-			_toolchain_build_menu "$1"
+			ui_show_build_menu "$1"
 		else
 			_select_menu
 		fi
@@ -213,7 +213,7 @@ _dialog_checkout1(){
 	$(USEGIT) && _dialog_checkout1_git $@ || _dialog_checkout1_svn $@
 }
 
-REVISION(){
+repo_get_revision(){
 	if [ -d "${repodir}" ] && cd "${repodir}"; then
 		if grep -q -- '--oscam-revision' "${repodir}/config.sh"; then
 			./config.sh --oscam-revision
@@ -223,7 +223,7 @@ REVISION(){
 	fi
 };
 
-COMMIT(){
+repo_get_commit(){
 	if [ -d "${repodir}" ] && cd "${repodir}"; then
 		$(USEGIT) && git log 2>/dev/null | sed -n 1p | cut -d ' ' -f2 | cut -c1-8 || printf ''
 	fi
@@ -245,8 +245,12 @@ BRANCH(){
 	fi
 };
 
-USEGIT(){
+repo_is_git(){
 	echo $URL_OSCAM_REPO | grep -qe '^git@\|.git$';
+}
+
+USEGIT(){
+	repo_is_git
 }
 
 REFTYPE(){

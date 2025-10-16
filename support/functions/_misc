@@ -1,8 +1,5 @@
 #!/bin/bash
 
-CPUS(){
-	nproc
-}
 clean(){
 	_clean
 }
@@ -43,14 +40,7 @@ decode(){
 get_module_name(){
 	printf "${INTERNAL_MODULES[$1]}"
 }
-gitrevision(){
-	if echo "$1" | grep -qocP '^(https?|git@.*)://\S+'
-	then
-		git ls-remote $1 2>/dev/null | head -1 | awk '{print substr($1, 1, 7)}' || echo 0
-	else
-		git -C $1 rev-parse --short HEAD 2>/dev/null || echo 0
-	fi
-}
+
 _wait(){
 	printf "$w_l\n"
 	read -n1 -r -p "  $txt_help3" key
@@ -268,18 +258,18 @@ _select_menu(){
 		Continue)
 					if [ ! -f "${repodir}/config.sh" ]
 					then
-						"$gui" "$st_" "$bt_" "$title_" --infobox "\n  $txt_no oscam-${REPO} $txt_found" 5 35
+						ui_show_msgbox "$txt_no oscam-${REPO} $txt_found" ""
 						sleep 2
 						_select_menu
 					else
-						_toolchain_main_menu
+						ui_show_toolchain_main_menu
 					fi;;
 		CHANGE)
 					if $(USEGIT)
 					then
-						_rev=$("$gui" "$st_" "$nc_" --cr-wrap "$ip_" "Commit: by sha, tag or branch name \nCommit: 0 = $txt_latest" 9 38 0)
+						_rev=$(ui_get_input "Commit: by sha, tag or branch name" "Commit: 0 = $txt_latest" "0")
 					else
-						new_rev=$("$gui" "$st_" "$nc_" --cr-wrap "$ip_" "Revision: 7000+ \nRevision: 0 = $txt_latest" 9 35 0)
+						new_rev=$(ui_get_input "Revision: 7000+" "Revision: 0 = $txt_latest" "0")
 						[[ $new_rev =~ ^-?[0-9]+$ ]] && [ ! "$new_rev" -le "7000" ] && _rev="$new_rev" || _rev=0
 					fi
 					[ ! -z "$_rev" ] && check_url "$trunkurl" && _dialog_checkout1 "$_rev"
@@ -302,7 +292,8 @@ exit
 _oscam_extra_menu(){
 	uv=
 	check_smargo
-	unset MENU_OPTIONS
+
+	menu_init "Oscam EXTRA Options"
 
 	for e in $(printf '%s\n' "${!USE_vars[@]}" | sort -u | xargs)
 	do
@@ -311,68 +302,74 @@ _oscam_extra_menu(){
 		then
 			if [ "${#USE_vars[$e]}" -gt "4" ]
 			then
-				MENU_OPTIONS+=( "$e" "$e" on )
+				menu_add_option "$e" "$e" "on"
 			else
-				MENU_OPTIONS+=( "$e" "$e" off )
+				menu_add_option "$e" "$e" "off"
 			fi
 		fi
 	done
 
-	oextra=$("$gui" "$st_" "$nc_" "$bt_" "$title_" --title "-[ Oscam EXTRA$(REPOIDENT) ]-" "$cl_" " OPTIONS " 19 40 12 ${MENU_OPTIONS[@]});
-	[ $? = 255 ] && _toolchain_config_menu
+	if menu_show_checkbox "19" "40"; then
+		selected_extra=($(menu_get_selected_options))
 
-	for e in $(printf '%s\n' "${!USE_vars[@]}" | sort -u | xargs)
-	do
-		if [ ! "$e" == "USE_TARGZ" ] && [ ! "$e" == "USE_PATCH" ] && [ ! "$e" == "USE_DIAG" ] && [ ! "$e" == "USE_EXTRA" ] && [ ! "$e" == "USE_CONFDIR" ] && [ ! "$e" == "USE_OSCAMNAME" ] && \
-		   [ ! "$e" == "USE_STATIC" ] && [ ! "$e" == "STATIC_LIBCRYPTO" ] && [ ! "$e" == "STATIC_SSL" ] && [ ! "$e" == "STATIC_LIBUSB" ] && [ ! "$e" == "STATIC_PCSC" ] && [ ! "$e" == "STATIC_LIBDVBCSA" ]
-		then
-			ok=0
-			for oex in $oextra
-			do
-				o=$(echo "$oex" | tr -d '"')
-				[ "$e" == "$o" ] && ok=1
-			done
-			if [ "$ok" == "1" ]
+		for e in $(printf '%s\n' "${!USE_vars[@]}" | sort -u | xargs)
+		do
+			if [ ! "$e" == "USE_TARGZ" ] && [ ! "$e" == "USE_PATCH" ] && [ ! "$e" == "USE_DIAG" ] && [ ! "$e" == "USE_EXTRA" ] && [ ! "$e" == "USE_CONFDIR" ] && [ ! "$e" == "USE_OSCAMNAME" ] && \
+			   [ ! "$e" == "USE_STATIC" ] && [ ! "$e" == "STATIC_LIBCRYPTO" ] && [ ! "$e" == "STATIC_SSL" ] && [ ! "$e" == "STATIC_LIBUSB" ] && [ ! "$e" == "STATIC_PCSC" ] && [ ! "$e" == "STATIC_LIBDVBCSA" ]
 			then
-				USE_vars[$e]="$e=1"
-			else
-				USE_vars[$e]=
+				if [[ " ${selected_extra[@]} " =~ " ${e} " ]]; then
+					USE_vars[$e]="$e=1"
+				else
+					USE_vars[$e]=
+				fi
 			fi
-		fi
-	done
+		done
+	else
+		# Cancel/ESC pressed - return without changes
+		_toolchain_config_menu
+	fi
 
 	[ "${USE_vars[USE_PCSC]}" == "USE_PCSC=1" ] && _pcsc_on
 	[ ! "${USE_vars[USE_PCSC]}" == "USE_PCSC=1" ] && _pcsc_off
-	save_config
+	cfg_save_build_profile
 	_toolchain_config_menu
 }
 _build_extra_menu(){
 	us=
 	check_smargo
-	unset MENU_OPTIONS
+
+	menu_init "Build EXTRA Options"
+
 	for e in USE_PATCH USE_EXTRA USE_CONFDIR USE_OSCAMNAME USE_TARGZ USE_DIAG USE_STATIC STATIC_LIBCRYPTO STATIC_SSL STATIC_LIBUSB STATIC_PCSC STATIC_LIBDVBCSA
 	do
-		[ "${#USE_vars[$e]}" -gt "4" ] && MENU_OPTIONS+=( "$e" "$e=1" on ) || MENU_OPTIONS+=( "$e" "$e=1" off )
+		[ "${#USE_vars[$e]}" -gt "4" ] && menu_add_option "$e" "$e=1" "on" || menu_add_option "$e" "$e=1" "off"
 	done
-	bextra=$("$gui" "$st_" "$nc_" "$bt_" "$title_" --title "-[ Build EXTRA$(REPOIDENT) ]-" "$cl_" " OPTIONS " 17 45 3 ${MENU_OPTIONS[@]})
-	[ $? = 255 ] && _build_extra_menu
-	USE_vars[USE_PATCH]=
-	USE_vars[STATIC_LIBCRYPTO]=
-	USE_vars[STATIC_SSL]=
-	USE_vars[STATIC_LIBUSB]=
-	USE_vars[STATIC_PCSC]=
-	USE_vars[STATIC_LIBDVBCSA]=
-	USE_vars[USE_STATIC]=
-	USE_vars[USE_EXTRA]=
-	USE_vars[USE_CONFDIR]=
-	USE_vars[USE_OSCAMNAME]=
-	USE_vars[USE_TARGZ]=
-	USE_vars[USE_DIAG]=
-	for bex in $bextra
-	do
-		b=$(echo "$bex" | tr -d '"')
-		USE_vars[$b]="$b=1"
-	done
+
+	if menu_show_checkbox "17" "45"; then
+		selected_build_extra=($(menu_get_selected_options))
+
+		USE_vars[USE_PATCH]=
+		USE_vars[STATIC_LIBCRYPTO]=
+		USE_vars[STATIC_SSL]=
+		USE_vars[STATIC_LIBUSB]=
+		USE_vars[STATIC_PCSC]=
+		USE_vars[STATIC_LIBDVBCSA]=
+		USE_vars[USE_STATIC]=
+		USE_vars[USE_EXTRA]=
+		USE_vars[USE_CONFDIR]=
+		USE_vars[USE_OSCAMNAME]=
+		USE_vars[USE_TARGZ]=
+		USE_vars[USE_DIAG]=
+
+		for option in "${selected_build_extra[@]}"
+		do
+			USE_vars[$option]="$option=1"
+		done
+	else
+		# Cancel/ESC pressed - return without changes
+		_toolchain_config_menu
+	fi
+
 	save_config
 	_toolchain_config_menu
 }
@@ -448,23 +445,23 @@ _gtedit(){
 	if [ -f "$tccfgdir/$_toolchainname" ]
 	then
 		source "$tccfgdir/$_toolchainname"
-		input=$("$gui" "$st_" "$bt_" "$title_" --title " -[ $1 Toolchain$(REPOIDENT) ]- " --inputbox "\n CONF_DIR=$_oscamconfdir_default 'default'\n [ESC] = default\n" 0 0 "$_oscamconfdir_custom")
-		retval=$?
+		confdir=$(ui_get_input " -[ $1 Toolchain$(REPOIDENT) ]- " "CONF_DIR=$($_oscamconfdir_custom:=$_oscamconfdir_default) 'default'" "$_oscamconfdir_custom")
 
-		case $retval in
+		case "$?" in
 			0)
-				confdir="$input";;
-			1)
+				# If user entered something
+				if [ -n "$confdir" ]; then
+					sed -i s@^_oscamconfdir_custom.*@_oscamconfdir_custom=\"$confdir\"@ "$tccfgdir/$_toolchainname"
+				fi;;
+			*)
+				# ESC or cancel - keep current setting
 				confdir="$_oscamconfdir_custom";;
-			255)
-				confdir="$_oscamconfdir_default";;
 		esac
 
-		sed -i s@^_oscamconfdir_custom.*@_oscamconfdir_custom=\"$confdir\"@ "$tccfgdir/$_toolchainname"
 		source "$tccfgdir/$_toolchainname"
 	fi
 }
-check_smargo(){
+build_check_smargo_deps(){
 	if [ -f "${repodir}/config.sh" ]
 	then
 		if [ "$("${repodir}/config.sh" --enabled CARDREADER_SMARGO)" == "Y" ]
@@ -475,7 +472,7 @@ check_smargo(){
 		fi
 	fi
 }
-check_streamrelay(){
+build_check_streamrelay_deps(){
 	if [ -f "${repodir}/config.sh" ]
 	then
 		if [ "$("${repodir}/config.sh" --enabled MODULE_STREAMRELAY)" == "Y" ]
@@ -551,7 +548,7 @@ _get_config_menu(){
 	source "$tmp"
 	rm -rf "$tmp"
 }
-read_s3cfg(){
+cfg_read_s3(){
 	if [ -f "$s3cfg" ]
 	then
 		while read l
@@ -560,6 +557,10 @@ read_s3cfg(){
 		done < "$s3cfg"
 	fi
 }
+
+read_s3cfg(){
+	cfg_read_s3
+}
 s3cfg_menu(){
 		unset CFG_MENU
 		declare -a CFG_MENU
@@ -567,48 +568,47 @@ s3cfg_menu(){
 		COUNT=0
 		found=""
 
-		# Special handling for S3_LOG_LEVEL - use radiolist
-		log_levels=("0#Fatal only" "1#Fatal + Error" "2#Fatal + Error + Warn (DEFAULT)" "3#Fatal + Error + Warn + Info" "4#Fatal + Error + Warn + Info + Debug")
-		selected_level=$("$gui" "$st_" "$bt_" "$title_" "$rl_" "Select Log Level" 16 50 5 "${s3cfg_vars[S3_LOG_LEVEL]}" "${log_levels[@]}" 3>&1 1>&2 2>&3)
-		if [ $? -eq 0 ]; then
+		# Special handling for S3_LOG_LEVEL - use menu system radiolist
+		menu_init "Select Log Level"
+		menu_add_option "0" "Fatal only" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "0" ] && echo "on" || echo "off" )"
+		menu_add_option "1" "Fatal + Error" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "1" ] && echo "on" || echo "off" )"
+		menu_add_option "2" "Fatal + Error + Warn (DEFAULT)" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "2" ] && echo "on" || echo "off" )"
+		menu_add_option "3" "Fatal + Error + Warn + Info" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "3" ] && echo "on" || echo "off" )"
+		menu_add_option "4" "Fatal + Error + Warn + Info + Debug" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "4" ] && echo "on" || echo "off" )"
+
+		if menu_show_radiolist; then
+			selected_level="$(menu_get_first_selection)"
 			s3cfg_vars[S3_LOG_LEVEL]=$selected_level
 		fi
 
-		# Build checklist for other options
+		# Build checklist for other options using menu system
+		menu_init "enable/disable options"
 		for e in "${!s3cfg_vars[@]}"
 		do
 			if [ "$e" != "S3_LOG_LEVEL" ]; then
-				CFG_MENU+="$e#on/off#$([ "${s3cfg_vars[$e]}" -gt "0" ] && echo on || echo off)#"
-				counter
+				menu_add_option "$e" "$e" "$([ "${s3cfg_vars[$e]}" -gt "0" ] && echo "on" || echo "off")"
 			fi
 		done
 
 		IFS="#"
-		erg=$("$gui" "$st_" "$bt_" "$title_" "$cl_" "enable/disable options" 16 45 10 ${CFG_MENU[@]})
+		# Use menu system checklist instead of direct gui call
+		if menu_show_checkbox; then
+			selected_options=("$(menu_get_selected_options)")
+		fi
 		IFS=$old_IFS
 
 	for e1 in "${!s3cfg_vars[@]}"
 	do
-		for e2 in $erg
-		do
-			found="0"
-			if [ "$e1" == "${e2//\'}" ]
-			then
-				found="1"
-				break
-			fi
-		done
-		if [ "$found" == "1" ]
-		then
+		if [[ " ${selected_options[@]} " =~ " ${e1} " ]]; then
 			s3cfg_vars[$e1]=1
 		else
 			s3cfg_vars[$e1]=0
 		fi
 	done
 
-	write_s3cfg
+	cfg_write_s3
 }
-write_s3cfg(){
+cfg_write_s3(){
 	[ -f "$s3cfg" ] && rm -rf "$s3cfg"
 	for e in "${!s3cfg_vars[@]}"
 	do
@@ -648,11 +648,11 @@ _stapi_select(){
 		_toolchain_config_menu
 	fi
 }
-save_config(){
+cfg_save_build_profile(){
 	usevars=
 	enabled=
 	disabled=
-	check_smargo
+	build_check_smargo_deps
 	enabled=($("${repodir}/config.sh" -s))
 	disabled=($("${repodir}/config.sh" -Z))
 	[ "$_toolchainname" == "sh4" ] && silent=$("${repodir}/config.sh" --disable WITH_COMPRESS)

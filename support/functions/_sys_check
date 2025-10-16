@@ -400,8 +400,8 @@ libdvbcsa_native_installer(){
 	(./bootstrap && ./configure $optimization) |& _log "$install_log" &>/dev/null
 	(($?)) && return 1;
 
-	echo -e "\nmake -j$(nproc)" |& _log "$install_log" &>/dev/null
-	make -j$(nproc) |& _log "$install_log" &>/dev/null || return 1;
+	echo -e "\nmake -j$(sys_get_cpu_count)" |& _log "$install_log" &>/dev/null
+	make -j$(sys_get_cpu_count) |& _log "$install_log" &>/dev/null || return 1;
 
 	echo -e "$w_l  Installing ${g_l}libdvbcsa$w_l...$re_" | _log "$install_log"
 	echo -e "\n$prefix make install" |& _log "$install_log" &>/dev/null
@@ -413,4 +413,8 @@ libdvbcsa_native_installer(){
 	" |& _log "$install_log" &>/dev/null
 	[[ "$prefix" =~ ^su[[:space:]].* ]] && echo
 	rm -rf /tmp/libdvbcsa 2>/dev/null
+}
+
+sys_get_cpu_count(){
+	nproc
 }

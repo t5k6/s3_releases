@@ -29,8 +29,10 @@ _save_profile(){
 	if [ -f "$menudir/$_toolchainname.save" ]
 	then
 		source "$menudir/$_toolchainname.save"
-		input=$("$gui" "$st_" "$bt_" "$title_" --title " -[ $1 Toolchain ]- " $ip_ "\n SAVE PROFILE\n" 0 0 "$_toolchainname")
-		echo $enabled $usevars | sed -e 's/CARDREADER_//g;s/READER_//g;s/MODULE_//g;s/HAVE_//g;s/WEBIF_//g;s/WITH_//g;s/CS_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g;' >"$profdir/$input.profile"
+		input=$(ui_get_input " -[ $1 Toolchain ]- " "SAVE PROFILE" "$_toolchainname")
+		if [ -n "$input" ]; then
+			echo $enabled $usevars | sed -e 's/CARDREADER_//g;s/READER_//g;s/MODULE_//g;s/HAVE_//g;s/WEBIF_//g;s/WITH_//g;s/CS_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g;' >"$profdir/$input.profile"
+		fi
 	fi
 }
 
@@ -41,31 +43,26 @@ _load_profile(){
 		loadprofile="no"
 		USESTRING=;
 		_create_module_arrays
-		unset selection
-		declare -a SELECTION
 		cd "$profdir"
 		p_files=(*.profile)
-		i=0
+
+		menu_init "$txt_select_profile_title"
 
 		for e in "${p_files[@]}"
 		do
-			((i++))
-			SELECTION+=($e '<')
+			menu_add_option "$e" "$e" "off"
 		done
 
-		pselect=$("$gui" "$st_" "$bt_" "$title_" --no-cancel --title " -[ $txt_select_profile_title ]- " --menu "\n $txt_select_profile\n\n" 0 0 "$i" "${SELECTION[@]}")
-		[ $? = 255 ] && loadprofile="yes" && _toolchain_build_menu
-		"$gui" "$st_" "$bt_" "$title_" --yesno "\n$txt_confirm_profile_select\n\n$pselect\n\n" 0 0
-		response=$?
+		if menu_show_list; then
+			pselect="$(menu_get_first_selection)"
+		else
+			# Cancel/ESC pressed - return to build menu
+			loadprofile="yes"
+			_toolchain_build_menu
+			return
+		fi
 
-		case "$response" in
-			1)
-				loadprofile="yes"
-				_toolchain_build_menu;;
-			255)
-				loadprofile="yes"
-				_toolchain_build_menu;;
-		esac
+		ui_show_msgbox "$txt_confirm_profile_select" "$pselect"
 
 		if [ -f "$profdir/$pselect" ]
 		then
@@ -97,7 +94,7 @@ _load_profile(){
 			loadprofile="yes"
 		fi
 	else
-		$gui --msgbox "\n$txt_no_profile_found \n " 0 0
+		ui_show_msgbox "Profile" "$txt_no_profile_found"
 	fi
 	loadprofile="no"
 }

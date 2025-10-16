@@ -1,6 +1,6 @@
 #!/bin/bash
 
-upload_cam(){
+net_upload_cam_profile(){
 	push_error_context "Upload CAM operation"
 	clear
 	slogo
