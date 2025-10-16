@@ -306,7 +306,7 @@ _integrate_libs(){
 							task=$(_replace_tokens "$task");	#replace tokens
 							buildtasks+=("$task");
 						done;
-						_build_library "($i/$icount) $tc: ${txt_lib} ${lib[1]} ${lib[2]}" "$(_extract "$(_dl "${lib[6]}" "${lib[1]} ${lib[2]}")" "$tmpdir" 2>/dev/null)" "$logfile" "${buildtasks[@]}";
+					_build_library "($i/$icount) $tc: ${txt_lib} ${lib[1]} ${lib[2]}" "$(_extract "$(_dl "${lib[6]}" "${lib[1]} ${lib[2]}")" "$tmpdir" 2>/dev/null)" "$logfile" "${buildtasks[@]}";
 						err=$(( $err + $?));
 					done;
 					[ "${#buildtasks[@]}" == "0" ] && echo -e "${r_l}  ${txt_error}:${y_l} ${o} ${w_l}${txt_s3tup_msg_library_not_found}${rs_}";
@@ -676,7 +676,7 @@ _build_library(){
 	(
 		bcl=$(printf '%s\n' "${tasks[@]}");
 
-		sp=$(printf '%*s' 80 | tr ' ' '=')
+		sp=$(printf '%s' "${sp0:='$p_l  ---------- '}")
 		(
 			echo -e "$pdesc - ${txt_s3tup_msg_build_library_log} - $(date +"%F %T")";
 			echo -e "$sp\n${txt_s3tup_msg_build_library_commandlist} $desc:\n$sp\ncd "$libsrcdir\;"\n$bcl\n$sp";
@@ -695,6 +695,11 @@ _build_library(){
 	fi;
 	return $error_on_build;
 };
+
+# Generalized function to build OpenSSL
+build_openssl_plugin() {
+	build_openssl "$1" "$2" "$3" "$4" "$5" "$6"
+}
 _tpl_editor(){
 	tc="$2";tpl="$tc";unset TASKS;unset configtasks;local i=0;
 

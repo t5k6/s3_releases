@@ -31,7 +31,7 @@ S3TUP_CONFIG_VERSION="83";
 CTNG_BUILD_AS_ROOT="0"; # Enable/Disable build as root (1|0)
 
 # crosstool-NG toolchain build settings
-CTNG_REPO_URL="https://github.com/crosstool-ng/crosstool-ng"; # Repository to load ct-ng from
+CTNG_REPO_URL="$URL_CROSSTOOL_NG_REPO"; # Repository to load ct-ng from
 CTNG_CONFIG_tasks=('clear; ./ct-ng menuconfig; echo -e "${y_l}${txt_s3tup_menu_edit_text}${re_}";'); # config command1
 CTNG_BUILD_tasks=('./ct-ng show-config | tee -a "@LOGFILE@";'); # build command1
 CTNG_BUILD_tasks+=('./ct-ng build;'); # build command2
@@ -42,7 +42,7 @@ CTNG_SETUP_tasks+=('./configure --enable-local;'); # setup command8
 CTNG_SETUP_tasks+=('make;'); # setup command9
 
 # freetz-NG toolchain build settings
-FNG_REPO_URL="https://github.com/Freetz-NG/freetz-ng.git"; # Repository to load freetz-ng from
+FNG_REPO_URL="$URL_FREETZ_NG_REPO"; # Repository to load freetz-ng from
 FNG_SEPARATE_DYNAMIC_LINKER="/usr/lib/freetz/ld-uClibc.so.0";
 FNG_CONFIG_tasks=('clear; make menuconfig; echo -e "${y_l}${txt_s3tup_menu_edit_text}${re_}";'); # config command1
 FNG_BUILD_tasks=('make olddefconfig | tee -a "@LOGFILE@";'); # build command1
@@ -52,8 +52,8 @@ FNG_SETUP_tasks=('git clone --progress "$FNG_REPO_URL" "@FNGSOURCE@";'); # setup
 FNG_SETUP_tasks+=('ln -s "../../downloads" "@FNGSOURCE@/dl";'); # setup command2
 
 # android-NDK toolchain build settings
-ANDK_PKG_URL="https://dl.google.com/android/repository/$(curl --silent https://developer.android.com/ndk/downloads | grep -A1 -m1 'ndk_lts_linux64_download' | tail -n1 | awk -F'>|<' '{print $2}' | xargs)"; # Location to load Android Native Development Kit (NDK) from
-ANDK_PKG_SHA1="$(curl --silent https://developer.android.com/ndk/downloads | grep -A4 -m1 'ndk_lts_linux64_download' | tail -n1 | awk -F'>|</' '{print $2}' | xargs)";
+ANDK_PKG_URL="$URL_ANDROID_NDK_REPO_BASE$(curl --silent "$URL_ANDROID_NDK_DOWNLOADS_PAGE" | grep -A1 -m1 'ndk_lts_linux64_download' | tail -n1 | awk -F'>|<' '{print $2}' | xargs)"; # Location to load Android Native Development Kit (NDK) from
+ANDK_PKG_SHA1="$(curl --silent "$URL_ANDROID_NDK_DOWNLOADS_PAGE" | grep -A4 -m1 'ndk_lts_linux64_download' | tail -n1 | awk -F'>|</' '{print $2}' | xargs)";
 ANDK_CONFIG_tasks=('clear; editor ".config"; echo -e "${y_l}${txt_s3tup_menu_edit_text}${re_}";'); # config command1
 ANDK_BUILD_tasks=('TOOLCHAIN="@TOOLCHAIN@";'); # build command1
 ANDK_BUILD_tasks+=('echo "Extracting prebuild toolchain "@ANDKSOURCE@/toolchains/llvm/prebuilt/linux-x86_64" from NDK to "@TOOLCHAIN@"..." | tee -a "@LOGFILE@" && rm -rf "@TOOLCHAIN@" | tee -a "@LOGFILE@" && cp -rf "@ANDKSOURCE@/toolchains/llvm/prebuilt/linux-x86_64/" "@TOOLCHAIN@" | tee -a "@LOGFILE@";'); # build command2

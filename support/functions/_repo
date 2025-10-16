@@ -8,11 +8,11 @@ repoclean(){
 	clear
 	echo -en "$c_l"
 	ologo
-	
+
 	cd "$workdir"
 	wcfolders="$(find . -maxdepth 1 -type d -name "oscam-${REPO}${ID}" | sed 's|./||')"
 	bcount=$(echo "$wcfolders" |wc -w)
-	
+
 	if [ "$bcount" -gt "0" ]; then
 		echo -e "\n$c_l    ${bcount}$w_l oscam-${REPO}${ID} $txt_wc ${txt_found}\n    ___________________________________$re_\n"
 		for wc in $wcfolders; do
@@ -23,11 +23,11 @@ repoclean(){
 	else
 		echo -e "\n$r_l    ${bcount}$w_l oscam-${REPO}${ID} $txt_wc ${txt_found}\n    ___________________________________$re_\n"
 	fi
-	
+
 	cd "$brepo"
 	bfiles="$(find . -maxdepth 1 -name "*-${REPO}${ID}.tar.gz" |sed 's|./||')"
 	bcount=$(echo "$bfiles" |wc -w)
-	
+
 	if [ "$bcount" -gt "0" ]; then
 		echo -e "\n$c_l    ${bcount}$w_l ${REPO}${ID} backup ${txt_found}\n    _______________________$re_\n"
 		for b in $bfiles; do
@@ -246,7 +246,7 @@ BRANCH(){
 };
 
 USEGIT(){
-	echo $trunkurl | grep -qe '^git@\|.git$';
+	echo $URL_OSCAM_REPO | grep -qe '^git@\|.git$';
 }
 
 REFTYPE(){
@@ -271,12 +271,12 @@ REPOURL(){
 			svnurl
 		fi
 	else
-		printf "$trunkurl"
+		printf "$URL_OSCAM_REPO"
 	fi
 }
 
 REPOURLDIRTY(){
-	[ "$(REPOURL)" == "$trunkurl" ] && return 1 || return 0
+	[ "$(REPOURL)" == "$URL_OSCAM_REPO" ] && return 1 || return 0
 }
 
 REPOIDENT(){

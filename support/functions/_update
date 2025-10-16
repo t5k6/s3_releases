@@ -5,18 +5,18 @@ update_me(){
 	printf "  s3_git CHECK:\n  -------------\n"
 	local_revision=0
 	online_revision=0
-	check_url "$s3url" || return
+	check_url "$URL_S3_REPO" || return
 
 	if [ ! -d $workdir/.git ]; then
 		s3local="$dldir/s3_github"
 
 		local_revision=$(gitrevision $s3local)
-		online_revision=$(gitrevision $s3url)
+		online_revision=$(gitrevision $URL_S3_REPO)
 
 		if [ ! "$local_revision" == "$online_revision" ]
 		then
 			printf "  update s3_git\n  Local revision: $local_revision\n Online revision: $online_revision\n"
-			rm -rf "$s3local"; git clone "$s3url" "$s3local" &>/dev/null; cd "$s3local"
+			rm -rf "$s3local"; git clone "$URL_S3_REPO" "$s3local" &>/dev/null; cd "$s3local"
 			printf "  updating all files ...\n\n"
 			yes | cp -rf ./s3 "$workdir/s3"
 			yes | cp -rf ./support/* "$workdir/support"

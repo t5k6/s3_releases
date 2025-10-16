@@ -8,7 +8,7 @@ svncheckout(){
 	i=0
 	COUNT=0
 
-	check_url "$trunkurl" || return
+	check_url "$URL_OSCAM_REPO" || return
 
 	if [ -d "${repodir}" ]
 	then
@@ -18,11 +18,11 @@ svncheckout(){
 		printf "$p_l\n  $txt_no oscam-${REPO} $txt_found\n$re_"
 	fi
 
-	printf "$w_l  ${REPO^^} Repository: $g_l$trunkurl$re_"
+	printf "$w_l  ${REPO^^} Repository: $g_l$URL_OSCAM_REPO$re_"
 	[ ! -z "$1" ] && [ $(($1)) -gt 6999 ] && opt_="-r$1" && mac_="($txt_selected)" || opt_=''
 
 	printf "\n$w_l  ${REPO^^} FileCount : "
-	svn info -R "$trunkurl" |grep '^URL' |uniq |wc -l >"$fc1"
+	svn info -R "$URL_OSCAM_REPO" |grep '^URL' |uniq |wc -l >"$fc1"
 	n=$(cat "$fc1")
 	printf "$g_l""$txt_found $n"
 	printf "\n$w_l  ${REPO^^} checkout  : "
@@ -32,7 +32,7 @@ svncheckout(){
 		counter=$(( 100*(++i)/n))
 		tput cup 10 18
 		[ "$counter" -lt "100" ] && echo -en "$g_l""$counter%$re_" || echo -e "$g_l""100%$re_"
-	done < <( svn co "$trunkurl" $opt_ "${repodir}" |sed "s|${repodir}/||g")
+	done < <( svn co "$URL_OSCAM_REPO" $opt_ "${repodir}" |sed "s|${repodir}/||g")
 
 	tput cup 10 18;
 	echo -e "$g_l""100%$re_"
@@ -56,7 +56,7 @@ svnup(){
 	ologo
 	i=1
 
-	check_url "$trunkurl" || return
+	check_url "$URL_OSCAM_REPO" || return
 
 	if [ -d "${repodir}" ]
 	then
@@ -66,8 +66,8 @@ svnup(){
 		return
 	fi
 
-	printf "\n$w_l  ${REPO^^} TrunkURL  : $g_l""$trunkurl""$re_"
-	svn co "$trunkurl" "${repodir}" -q
+	printf "\n$w_l  ${REPO^^} TrunkURL  : $g_l""$URL_OSCAM_REPO""$re_"
+	svn co "$URL_OSCAM_REPO" "${repodir}" -q
 
 	if [ -f "${repodir}/config.sh" ]
 	then
@@ -94,7 +94,7 @@ _dialog_checkout1_svn(){
 		sc_text="$txt_latest"
 	fi
 	(printf "$txt_prepare_svn $txt_wait";)| "$gui" "$st_" "$bt_" "$title_" "$pb_" 3 55
-	nnn="$(svn info $_rev -R "$trunkurl" |grep "^URL: " |uniq |wc -l)"
+	nnn="$(svn info $_rev -R "$URL_OSCAM_REPO" |grep "^URL: " |uniq |wc -l)"
 	"$gui" "$st_" "$bt_" "$title_" --title " -[ ${REPO^^} Checkout $sc_text ]- " --gauge "  $txt_wait" 6 75 < <(while read line filename;do ((++i));PCT=$(( 100*i/(nnn+1) ))
 cat <<EOF
 XXX
@@ -102,7 +102,7 @@ $PCT
   $line
 XXX
 EOF
-done < <(svn co "$trunkurl" "${repodir}" $_rev| sed "s@${repodir}@@g"| awk '{print $2}'
+done < <(svn co "$URL_OSCAM_REPO" "${repodir}" $_rev| sed "s@${repodir}@@g"| awk '{print $2}'
 	cd "${repodir}"
 	if [ -f "${repodir}/config.sh" ]
 	then

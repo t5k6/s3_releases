@@ -1,2 +1,27 @@
-   s3url="https://github.com/gorgone/s3_releases.git";
-trunkurl="https://git.streamboard.tv/common/oscam.git"
+# ===================================================================
+# Central URL Configuration for Simplebuild3
+# ===================================================================
+
+# --- Core Repositories ---
+URL_S3_REPO="https://github.com/gorgone/s3_releases.git"
+URL_OSCAM_REPO="https://git.streamboard.tv/common/oscam.git"
+
+# --- Patches ---
+URL_OSCAM_EMU_PATCH="https://raw.githubusercontent.com/oscam-mirror/oscam-emu-patch/refs/heads/master/oscam-emu.patch"
+
+# --- Toolchain Builder & Library Repositories (for tcupdate plugin) ---
+
+# Build Systems
+URL_CROSSTOOL_NG_REPO="https://github.com/crosstool-ng/crosstool-ng"
+URL_FREETZ_NG_REPO="https://github.com/Freetz-NG/freetz-ng.git"
+URL_ANDROID_NDK_DOWNLOADS_PAGE="https://developer.android.com/ndk/downloads"
+URL_ANDROID_NDK_REPO_BASE="https://dl.google.com/android/repository/"
+
+# Libraries
+URL_OPENSSL_REPO="https://github.com/openssl/openssl.git"
+URL_CURL_REPO="https://github.com/curl/curl.git"
+URL_LIBUSB_REPO="https://github.com/libusb/libusb.git"
+URL_PCSC_LITE_BASE="https://pcsclite.apdu.fr/files/"
+URL_CCID_BASE="https://ccid.apdu.fr/files/"
+URL_LIBDVBCSA_ZIP="https://github.com/oe-mirrors/libdvbcsa/archive/refs/heads/master.zip"
+URL_ZLIB_REPO="https://github.com/madler/zlib.git"
