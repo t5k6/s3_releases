@@ -1,13 +1,13 @@
 #!/bin/bash
 
-checkout(){
-	$(USEGIT) && gitcheckout $@ || svncheckout $@
+repo_checkout(){
+	$(USEGIT) && repo_checkout_git $@ || repo_checkout_svn $@
 }
 
-repoclean(){
+repo_clean(){
 	clear
 	echo -en "$c_l"
-	ologo
+	ui_show_logo_s3
 
 	cd "$workdir"
 	wcfolders="$(find . -maxdepth 1 -type d -name "oscam-${REPO}${ID}" | sed 's|./||')"
@@ -41,10 +41,10 @@ repoclean(){
 	[ -f "$ispatched" ] && rm -f "$ispatched";
 }
 
-reporestore(){
+repo_restore(){
 	clear
 	echo -en "$c_l"
-	ologo
+	ui_show_logo_s3
 
 	if [ "$1" == "list" ]
 	then
@@ -74,23 +74,23 @@ reporestore(){
 		printf "$p_l\n  $txt_no oscam-${REPO}${ID} $txt_found\n$re_"
 	fi
 	_nl
-	untar_repo $1
+	file_extract_archive $1
 	printf "\e[1A\t\t\t\t\t$y_l""restored\n\n$re_"
 	[ -L "$workdir/lastbuild.log" ]&& rm "$workdir/lastbuild.log";
 	[ -L "$workdir/lastpatch.log" ]&& rm "$workdir/lastpatch.log";
 	[ -f "$ispatched" ] && rm -f "$ispatched";
 }
 
-repoup(){
-	$(USEGIT) && gitup $@ || svnup $@
+repo_update(){
+	$(USEGIT) && repo_update_git $@ || repo_update_svn $@
 }
 
-quickreporestore(){
+repo_restore_quick(){
 	printf "$1 \n"
-	untar_repo $1
+	file_extract_archive $1
 }
 
-repopatch(){
+repo_apply_patches(){
 	filter="*"
 	if [ ! -z "$1" ]; then
 		if [ "$1" == "-f" -o "$1" == "--force" ]; then
