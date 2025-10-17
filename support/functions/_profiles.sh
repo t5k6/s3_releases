@@ -1,23 +1,21 @@
 #!/bin/bash
 
-profiles(){
+profiles() {
 	_list_profiles
 	exit
 }
 
-_list_profiles(){
+_list_profiles() {
 	cd "$profdir"
 	profiles=(*.profile)
-	if [ ${#profiles[@]} -gt 0 ]
-	then
+	if [ ${#profiles[@]} -gt 0 ]; then
 		printf "$c_l"
 		clear
 		slogo
 		printf "$y_l\n  $txt_profiles $txt_found $txt_for ( ./$(basename "$0") \"tcname\" -p=name.profile )\n"
 		echo -e "$w_l  ======================================================\n"
 		i=0
-		for e in "${profiles[@]}"
-		do
+		for e in "${profiles[@]}"; do
 			((i++))
 			printf "$w_l  ($i) > $e\n"
 		done
@@ -25,9 +23,8 @@ _list_profiles(){
 	printf "\n$rs_"
 }
 
-_save_profile(){
-	if [ -f "$menudir/$_toolchainname.save" ]
-	then
+_save_profile() {
+	if [ -f "$menudir/$_toolchainname.save" ]; then
 		source "$menudir/$_toolchainname.save"
 		input=$(ui_get_input " -[ $1 Toolchain ]- " "SAVE PROFILE" "$_toolchainname")
 		if [ -n "$input" ]; then
@@ -36,20 +33,18 @@ _save_profile(){
 	fi
 }
 
-_load_profile(){
-	if [ "$(ls -A "$profdir")" ]
-	then
+_load_profile() {
+	if [ "$(ls -A "$profdir")" ]; then
 		ok=0
 		loadprofile="no"
-		USESTRING=;
+		USESTRING=
 		_create_module_arrays
 		cd "$profdir"
 		p_files=(*.profile)
 
 		menu_init "$txt_select_profile_title"
 
-		for e in "${p_files[@]}"
-		do
+		for e in "${p_files[@]}"; do
 			menu_add_option "$e" "$e" "off"
 		done
 
@@ -64,33 +59,27 @@ _load_profile(){
 
 		ui_show_msgbox "$txt_confirm_profile_select" "$pselect"
 
-		if [ -f "$profdir/$pselect" ]
-		then
-			profile_vars=$(cat "$profdir/$pselect";)
+		if [ -f "$profdir/$pselect" ]; then
+			profile_vars=$(cat "$profdir/$pselect")
 			reset_="$("${repodir}/config.sh" -D all)"
 
-			for e in "${!USE_vars[@]}"
-			do
-				USE_vars[$e]=;
+			for e in "${!USE_vars[@]}"; do
+				USE_vars[$e]=
 			done
 
-			for e1 in $profile_vars
-			do
-				for e2 in "${!USE_vars[@]}"
-				do
+			for e1 in $profile_vars; do
+				for e2 in "${!USE_vars[@]}"; do
 					[ "$e1" == "$e2" ] && USE_vars[$e1]="$e1=1"
 				done
-				for sm in "${SHORT_MODULENAMES[@]}"
-				do
-					if [ "$e1" == "$sm" ]
-					then
+				for sm in "${SHORT_MODULENAMES[@]}"; do
+					if [ "$e1" == "$sm" ]; then
 						_em_="$_em_ $(get_module_name "$sm")"
 					fi
 				done
 			done
 
 			_set_=$("${repodir}/config.sh" -E $_em_)
-			USESTRING="$(echo "${USE_vars[@]}"| sed 's@USE_@@g' | sed 's@=1@@g'| tr -s ' ')"
+			USESTRING="$(echo "${USE_vars[@]}" | sed 's@USE_@@g' | sed 's@=1@@g' | tr -s ' ')"
 			loadprofile="yes"
 		fi
 	else
@@ -99,7 +88,7 @@ _load_profile(){
 	loadprofile="no"
 }
 
-_create_native_profile(){
+_create_native_profile() {
 
 	[ ! -d "$tcdir/native/bin" ] && mkdir -p "$tcdir/native/bin"
 	cd "$tcdir/native/bin"
@@ -114,24 +103,24 @@ _create_native_profile(){
 	fi
 	if [ -f $gpp ]; then
 		gpp_link="$($g -dumpmachine)-g++"
-		[ -L "$gpp_link" ]      || ln -sf "$gpp" "$gpp_link"
+		[ -L "$gpp_link" ] || ln -sf "$gpp" "$gpp_link"
 	fi
 	if [ -f $stripvar ]; then
 		strip_link="$($g -dumpmachine)-strip"
-		[ -L "$strip_link" ]    || ln -sf "$stripvar" "$strip_link"
+		[ -L "$strip_link" ] || ln -sf "$stripvar" "$strip_link"
 	fi
 	if [ -f $objcopy ]; then
 		objcopy_link="$($g -dumpmachine)-objcopy"
-		[ -L "$objcopy_link" ]  || ln -sf "$objcopy" "$objcopy_link"
+		[ -L "$objcopy_link" ] || ln -sf "$objcopy" "$objcopy_link"
 	fi
 	if [ -f $objdump ]; then
 		objdump_link="$($g -dumpmachine)-objdump"
-		[ -L "$objdump_link" ]  || ln -sf "$objdump" "$objdump_link"
+		[ -L "$objdump_link" ] || ln -sf "$objdump" "$objdump_link"
 	fi
 	cd "$tccfgdir"
 
 	if [ ! -f native ]; then
-		cat << EOF > native
+		cat <<EOF >native
 _toolchainname="native";
 default_use="USE_LIBCRYPTO";
 _oscamconfdir_default="/usr/local/etc";
@@ -145,6 +134,6 @@ _sysroot="/usr/include";
 EOF
 	fi
 
-cd "$workdir"
+	cd "$workdir"
 
 }

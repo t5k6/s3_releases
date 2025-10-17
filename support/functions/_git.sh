@@ -1,6 +1,6 @@
 #!/bin/bash
 
-repo_checkout_git(){
+repo_checkout_git() {
 	err_push_context "Git checkout operation"
 	log_header "Starting Git Checkout"
 
@@ -47,7 +47,7 @@ repo_checkout_git(){
 	return 0
 }
 
-repo_update_git(){
+repo_update_git() {
 	err_push_context "Git update operation"
 	log_header "Starting Git Update"
 
@@ -68,8 +68,7 @@ repo_update_git(){
 
 	#check shallow cloned repo
 	cd "${repodir}"
-	if [ ! -f "$(git rev-parse --git-dir)"/shallow ]
-	then
+	if [ ! -f "$(git rev-parse --git-dir)"/shallow ]; then
 		validate_command "Resetting local changes" git reset --hard HEAD
 		validate_command "Switching to master branch" git checkout --quiet master
 		validate_command "Pulling latest changes" git pull --quiet
@@ -79,7 +78,8 @@ repo_update_git(){
 		cd "$workdir"
 		branch="$(BRANCH)"
 		validate_command "Removing shallow clone directory" rm -rf "${repodir}"
-		local clone_depth; clone_depth=$(cfg_get_value "s3" "GIT_CLONE_DEPTH" "1")
+		local clone_depth
+		clone_depth=$(cfg_get_value "s3" "GIT_CLONE_DEPTH" "1")
 		validate_command "Cloning fresh shallow copy" git clone -c advice.detachedHead=false --quiet --depth="$clone_depth" --branch "$branch" "$URL_OSCAM_REPO" "${repodir}"
 	fi
 
@@ -96,31 +96,11 @@ repo_update_git(){
 	return 0
 }
 
-_dialog_checkout1_git(){
-	rm -rf "${repodir}" 2>/dev/null
-	[ -z "$1" -o "$1" == "0" ] && commit='master' || commit="$1"
-	if [ "$commit" != 'master' ]
-	then
-		_rev="-r $commit"
-		sc_text="Revision: $commit"
-	else
-		_rev=''
-		sc_text="$txt_latest"
-	fi
+gitclone() {
+	local clone_depth
+	clone_depth=$(cfg_get_value "s3" "GIT_CLONE_DEPTH" "0")
 
-	cd "$workdir" && gitclone "$commit"
-	if [ -f "${repodir}/config.sh" ]; then
-		validate_command "Resetting config" "${repodir}/config.sh" -R
-		[ -f "$ispatched" ] && rm -f "$ispatched"
-		_get_config_menu
-	fi
-}
-
-gitclone(){
-	local clone_depth; clone_depth=$(cfg_get_value "s3" "GIT_CLONE_DEPTH" "0")
-
-	if [ "$clone_depth" -eq 0 ] || [ "$(REFTYPE "$1")" == 'sha' ]
-	then
+	if [ "$clone_depth" -eq 0 ] || [ "$(REFTYPE "$1")" == 'sha' ]; then
 		# Full clone (slow) is required for specific SHAs or if shallow clone is disabled.
 		if [[ "$(REFTYPE "$1")" == 'sha' && "$clone_depth" -gt 0 ]]; then
 			log_warn "Shallow cloning is enabled, but a specific commit SHA was requested. Performing a full clone."
@@ -141,13 +121,12 @@ gitclone(){
 	return 0
 }
 
-giturl(){
+giturl() {
 	git config --get remote.origin.url
 }
 
-repo_get_git_revision(){
-	if echo "$1" | grep -qocP '^(https?|git@.*)://\S+'
-	then
+repo_get_git_revision() {
+	if echo "$1" | grep -qocP '^(https?|git@.*)://\S+'; then
 		git ls-remote $1 2>/dev/null | head -1 | awk '{print substr($1, 1, 7)}' || echo 0
 	else
 		git -C $1 rev-parse --short HEAD 2>/dev/null || echo 0

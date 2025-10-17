@@ -41,19 +41,20 @@ _update_me_logic() {
 	fi
 }
 
-sys_update_self(){
+sys_update_self() {
 	err_push_context "Update s3 operation"
-	clear;s3logo
+	clear
+	s3logo
 	printf "  s3_git CHECK:\n  -------------\n"
 	local_revision=0
 	online_revision=0
-    # Use the new, robust network check function
+	# Use the new, robust network check function
 	if ! validate_command "Checking repository URL" net_check_url "$URL_S3_REPO"; then
-        log_warn "Could not reach the S3 repository. Skipping update check."
-        err_pop_context
-        sleep 2
-        return 1
-    fi
+		log_warn "Could not reach the S3 repository. Skipping update check."
+		err_pop_context
+		sleep 2
+		return 1
+	fi
 
 	if [ ! -d $workdir/.git ]; then
 		s3local="$dldir/s3_github"
@@ -61,10 +62,11 @@ sys_update_self(){
 		local_revision=$(repo_get_git_revision $s3local)
 		online_revision=$(repo_get_git_revision $URL_S3_REPO)
 
-		if [ ! "$local_revision" == "$online_revision" ]
-		then
+		if [ ! "$local_revision" == "$online_revision" ]; then
 			printf "  update s3_git\n  Local revision: $local_revision\n Online revision: $online_revision\n"
-			rm -rf "$s3local"; git clone "$URL_S3_REPO" "$s3local" &>/dev/null; cd "$s3local"
+			rm -rf "$s3local"
+			git clone "$URL_S3_REPO" "$s3local" &>/dev/null
+			cd "$s3local"
 			printf "  updating all files ...\n\n"
 			yes | cp -rf ./s3 "$workdir/s3"
 			yes | cp -rf ./support/* "$workdir/support"
@@ -82,7 +84,7 @@ sys_update_self(){
 	sleep 2
 }
 
-sys_repair_self(){
+sys_repair_self() {
 	clear
 	s3logo
 	s3local="$dldir/s3_github"

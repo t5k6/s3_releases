@@ -103,9 +103,8 @@ cfg_set_value "s3" "delete_oscamdebugbinary" "1"
 
 #filled arrays
 config_cases=( all addons protocols readers card_readers );
-s3opts=( cedit checkout clean fix_me get_patch help lang_select loadonly\
-	menu profiles ssh_profiles repoclean repopatch reporestore repoup syscheck sysinfo tccheck\
-	tcrepair tedit update update_me upload version ) # extendable with plugins
+s3opts=( cedit checkout clean get_patch help lang_select loadonly menu profiles ssh_profiles repoclean repopatch reporestore sys_update_self sys_repair_self syscheck sysinfo tccheck\
+	tcrepair tedit update upload version ) # extendable with plugins
 
 CUSTOM_CONFDIR="not_set"
 pf_name="not_set"
@@ -239,7 +238,7 @@ else
 
 			case $e in
 
-			fix_me|checkout|update_me|reporestore|upload_cam)
+			checkout|reporestore)
 				if [ ! -n "$2" ]
 				then
 					eval "$e"
@@ -247,13 +246,18 @@ else
 					eval "$e" "$2"
 				fi
 				exit;;
+			sys_update_self|sys_repair_self)
+				if ! validate_command "Executing $e" "$e"; then
+					log_fatal "$e operation failed." "$EXIT_ERROR"
+				fi
+				exit;;
 
 			menu)
 				if [ ! -n "$2" ]
 				then
-					_dialog_checkout
+					ui_show_main_menu
 				else
-					_dialog_checkout "$2"
+					ui_show_main_menu "$2" # Pass along arg if needed, though new menu may not use it
 				fi;;
 
 			loadonly)
@@ -312,7 +316,6 @@ else
 
 			tcrepair)
 				if [ ! -n "$2" ];then
-					_nl
 					clear
 					s3logo
 					printf "$r_l\n  $txt_error: toolchain $txt_parameter $txt_missing\n""$w_l"
@@ -323,7 +326,7 @@ else
 				else
 					_nl
 					clear
-					_toolchain_repair "$2"
+					sys_repair_toolchain "$2"
 					sleep 2
 					exit
 				fi;;
@@ -335,10 +338,10 @@ else
 					clear
 					s3logo
 					echo -e "$r_l\n  $txt_error: $txt_parameter $txt_missing""$w_l"
-					menucall="yes"
+					menucall="yes" # This global seems to be part of the legacy flow
 					ssh_profiles
 				else
-					upload_cam "$2"
+					net_upload_cam_profile "$2"
 				fi
 				exit;;
 
@@ -353,7 +356,7 @@ else
 					do
 						if [ "$telement" == "$2" ]
 						then
-							tedit $2
+							_gtedit "$2"
 							exit
 						fi
 					done

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-repo_checkout(){
+repo_checkout() {
 	if $(USEGIT); then
 		repo_checkout_git "$@"
 	else
@@ -8,14 +8,14 @@ repo_checkout(){
 	fi
 }
 
-repo_clean(){
+repo_clean() {
 	clear
 	echo -en "$c_l"
 	ui_show_logo_s3
 
 	cd "$workdir"
 	wcfolders="$(find . -maxdepth 1 -type d -name "oscam-${REPO}${ID}" | sed 's|./||')"
-	bcount=$(echo "$wcfolders" |wc -w)
+	bcount=$(echo "$wcfolders" | wc -w)
 
 	if [ "$bcount" -gt "0" ]; then
 		echo -e "\n$c_l    ${bcount}$w_l oscam-${REPO}${ID} $txt_wc ${txt_found}\n    ___________________________________$re_\n"
@@ -29,8 +29,8 @@ repo_clean(){
 	fi
 
 	cd "$brepo"
-	bfiles="$(find . -maxdepth 1 -name "*-${REPO}${ID}.tar.gz" |sed 's|./||')"
-	bcount=$(echo "$bfiles" |wc -w)
+	bfiles="$(find . -maxdepth 1 -name "*-${REPO}${ID}.tar.gz" | sed 's|./||')"
+	bcount=$(echo "$bfiles" | wc -w)
 
 	if [ "$bcount" -gt "0" ]; then
 		echo -e "\n$c_l    ${bcount}$w_l ${REPO}${ID} backup ${txt_found}\n    _______________________$re_\n"
@@ -42,25 +42,22 @@ repo_clean(){
 	else
 		echo -e "\n$r_l    ${bcount}$w_l ${REPO}${ID} backup ${txt_found}\n    _______________________$re_\n"
 	fi
-	[ -f "$ispatched" ] && rm -f "$ispatched";
+	[ -f "$ispatched" ] && rm -f "$ispatched"
 }
 
-repo_restore(){
+repo_restore() {
 	clear
 	echo -en "$c_l"
 	ui_show_logo_s3
 
-	if [ "$1" == "list" ]
-	then
+	if [ "$1" == "list" ]; then
 		cd "$brepo"
-		bfiles="$(find . -type f -name "*-${REPO}${ID}.tar.gz" |sed 's|./||' |sed 's|.tar.gz||')"
-		bcount=$(echo "$bfiles" |wc -w)
+		bfiles="$(find . -type f -name "*-${REPO}${ID}.tar.gz" | sed 's|./||' | sed 's|.tar.gz||')"
+		bcount=$(echo "$bfiles" | wc -w)
 
-		if [ "$bcount" -gt "0" ]
-		then
+		if [ "$bcount" -gt "0" ]; then
 			echo -e "\n$c_l    $bcount$w_l ${REPO}${ID} backups found\n    ____________________$re_\n"
-			for b in $bfiles
-			do
+			for b in $bfiles; do
 				echo -e "$c_l    --> $w_l$b"
 			done
 			_nl
@@ -80,12 +77,12 @@ repo_restore(){
 	_nl
 	file_extract_archive $1
 	printf "\e[1A\t\t\t\t\t$y_l""restored\n\n$re_"
-	[ -L "$workdir/lastbuild.log" ]&& rm "$workdir/lastbuild.log";
-	[ -L "$workdir/lastpatch.log" ]&& rm "$workdir/lastpatch.log";
-	[ -f "$ispatched" ] && rm -f "$ispatched";
+	[ -L "$workdir/lastbuild.log" ] && rm "$workdir/lastbuild.log"
+	[ -L "$workdir/lastpatch.log" ] && rm "$workdir/lastpatch.log"
+	[ -f "$ispatched" ] && rm -f "$ispatched"
 }
 
-repo_update(){
+repo_update() {
 	if $(USEGIT); then
 		repo_update_git "$@"
 	else
@@ -93,139 +90,12 @@ repo_update(){
 	fi
 }
 
-repo_restore_quick(){
+repo_restore_quick() {
 	printf "$1 \n"
 	file_extract_archive $1
 }
 
-repo_apply_patches(){
-	filter="*"
-	if [ ! -z "$1" ]; then
-		if [ "$1" == "-f" -o "$1" == "--force" ]; then
-			force="$1"
-		else
-			filter="$1"
-		fi
-	fi
-
-	if [ ! -z "$2" ]; then
-		if [ "$2" == "-f" -o "$2" == "--force" ]; then
-			force="$2"
-		else
-			filter="$2"
-		fi
-	fi
-
-	if [ ! -f "$ispatched" -o ! -z "$force" ]
-	then
-		clear
-		printf $C
-		ologo
-		unset patchlist
-		cd "$pdir"
-		patchlist=(${filter}.patch)
-		patchlog="$(mktemp)"
-
-		if [ "$(ls -A "$pdir"/${filter}.patch 2>/dev/null)" ]
-		then
-			for p in "${patchlist[@]}"
-			do
-				PATCHSTYLE=$(_patch_style "$pdir/$p")
-				echo -e "\n$C ${PATCHSTYLE:1}-patch :  $p $force$W"; echo -e "\n$p" >> "$patchlog"
-				sleep .5
-				if grep 'GIT binary patch' "$pdir/$p" &>/dev/null; then
-					cd "${repodir}"
-					echo -e $Y" binary patch detected, using 'git apply' <-"$W
-					export LC_ALL=C; git apply --verbose $PATCHSTYLE < "$pdir/$p" 2>&1 | tee -a "$patchlog" | sed -e "s/^Checking patch/$G checking > $WH/g;s/^Applied patch/$G patching > $WH/g;s/^Hunk/$P Hunk     > $Y/g;s/FAILED/$R FAILED/g; ;s/-- saving/$Y -- saving/g;"
-				else
-					patch -d${repodir}/ $PATCHSTYLE < "$pdir/$p" | tee -a "$patchlog" | sed -e "s/^patching file/$G patching > $WH/g;s/^Hunk/$P Hunk     > $Y/g;s/FAILED/$R FAILED/g; ;s/-- saving/$Y -- saving/g;"
-				fi
-			done
-
-			cat $patchlog >"$ldir/$e.log"
-			ln -frs "$ldir/$e.log" "$workdir/lastpatch.log"
-			rm -rf "$patchlog"
-
-			mark_patched
-		else
-			printf $WH"    $txt_no patch $txt_found"
-		fi
-
-	else
-		clear
-		printf $C
-		ologo
-		printf $WH"    already patched"
-	fi
-	echo -e $W
-}
-
-_dialog_checkout(){
-	upc="$(mktemp)"
-	(printf " $txt_verify_syscheck "
-	[ "$sanity" == "1" ] && printf "ok\n" && sleep 1;
-
-	if [ "${s3cfg_vars[NO_REPO_AUTOUPDATE]}" == "0" ]
-	then
-		printf  " $txt_verify_svn "
-		if [ -f "${repodir}/config.sh" ]
-		then
-			if check_url "$URL_OSCAM_REPO" >/dev/null
-			then
-				printf "ok\n"
-				sleep 1
-				printf " $txt_update_svn $txt_wait\n"
-				cd "${repodir}"
-				$(USEGIT) && git pull --quiet || svn -q update
-				echo 1 >"$upc"
-			else
-				printf "not ok\n"
-			fi
-			sleep 1
-		fi
-	fi;) | "$gui" "$st_" "$bt_" "$title_" "$pb_" 5 52
-
-	if [ "${s3cfg_vars[NO_REPO_AUTOUPDATE]}" == "0" ]
-	then
-		upc1=$(cat "$upc" 2>/dev/null)
-		rm -f "$upc"
-		[ ! "$upc1" == "1" ] && check_url "$URL_OSCAM_REPO" && _dialog_checkout1
-
-		if [ -f "${repodir}/config.sh" ]
-		then
-			reset_="$("${repodir}/config.sh" -R)"
-		fi
-		_get_config_menu
-	fi
-
-	if [ -n "$1" ]
-	then
-		if [ -f "$tccfgdir/$1" ] && [ -f "${repodir}/config.sh" ]
-		then
-			source "$tccfgdir/$1"
-			if [ ! -f "$tcdir/$_toolchainname/bin/$_compiler""gcc" ]
-			then
-				first="$1"
-				ui_install_toolchain_interactive
-			fi
-			loadprofile="yes"
-			ui_show_build_menu "$1"
-		else
-			_select_menu
-		fi
-	fi
-	_select_menu
-}
-
-_dialog_checkout1(){
-	if $(USEGIT); then
-		_dialog_checkout1_git "$@"
-	else
-		_dialog_checkout1_svn "$@"
-	fi
-}
-
-repo_get_revision(){
+repo_get_revision() {
 	if [ -d "${repodir}" ]; then
 		(
 			cd "${repodir}"
@@ -236,15 +106,15 @@ repo_get_revision(){
 			fi
 		)
 	fi
-};
+}
 
-repo_get_commit(){
+repo_get_commit() {
 	if [ -d "${repodir}" ]; then
 		(cd "${repodir}" && $(USEGIT) && git rev-parse --short HEAD 2>/dev/null) || printf ''
 	fi
-};
+}
 
-BRANCH(){
+BRANCH() {
 	if [ -d "${repodir}" ]; then
 		(cd "${repodir}" && {
 			if $(USEGIT); then
@@ -260,17 +130,17 @@ BRANCH(){
 			fi
 		})
 	fi
-};
-
-repo_is_git(){
-	echo $URL_OSCAM_REPO | grep -qe '^git@\|.git$';
 }
 
-USEGIT(){
+repo_is_git() {
+	echo $URL_OSCAM_REPO | grep -qe '^git@\|.git$'
+}
+
+USEGIT() {
 	repo_is_git
 }
 
-REFTYPE(){
+REFTYPE() {
 	if [[ "$1" =~ ^[0-9a-f]{8,40}$ ]]; then
 		printf 'sha'
 	elif [ "$1" -eq "$1" ] 2>/dev/null; then
@@ -280,11 +150,11 @@ REFTYPE(){
 	fi
 }
 
-REPOTYPE(){
+REPOTYPE() {
 	$(USEGIT) && printf 'git' || printf 'svn'
 }
 
-REPOURL(){
+REPOURL() {
 	if [ -d "${repodir}" ] && cd "${repodir}"; then
 		if $(USEGIT); then
 			giturl
@@ -296,22 +166,22 @@ REPOURL(){
 	fi
 }
 
-REPOURLDIRTY(){
+REPOURLDIRTY() {
 	[ "$(REPOURL)" == "$URL_OSCAM_REPO" ] && return 1 || return 0
 }
 
-REPOIDENT(){
+REPOIDENT() {
 	if [ -v SOURCE ]; then
-		 printf " $SOURCE"
+		printf " $SOURCE"
 	else
 		printf ""
 	fi
 }
 
 REVISION() {
-    repo_get_revision
+	repo_get_revision
 }
 
 COMMIT() {
-    repo_get_commit
+	repo_get_commit
 }

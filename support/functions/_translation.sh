@@ -1,18 +1,15 @@
 #!/bin/bash
 
-auto_langset(){
+auto_langset() {
 	langset="fail"
 	cd "$tdir"
 	langsupport=(*)
 
-	if [ -f "$configdir/force_lang" ]
-	then
+	if [ -f "$configdir/force_lang" ]; then
 		lng1=$(head -n 1 "$configdir/force_lang")
-		for lng in "${langsupport[@]}"
-		do
+		for lng in "${langsupport[@]}"; do
 
-			if [ "$lng" == "$lng1" ]
-			then
+			if [ "$lng" == "$lng1" ]; then
 				source "$tdir/$lng"
 				langset="ok"
 				return
@@ -21,51 +18,43 @@ auto_langset(){
 		done
 	fi
 
-	for lng in "${langsupport[@]}"
-	do
-		if [ "${LANG:0:2}" == "$lng" ]
-		then
+	for lng in "${langsupport[@]}"; do
+		if [ "${LANG:0:2}" == "$lng" ]; then
 			source "$tdir/$lng"
 			langset="ok"
 			return
 		fi
 	done
 
-	if [ ! "$langset" == "ok" ]
-	then
+	if [ ! "$langset" == "ok" ]; then
 		[ -f "$tdir/en" ] && source "$tdir/en"
 	fi
 }
 
-lang_select(){
+lang_select() {
 	lng="none"
 	[ -f "$configdir/force_lang" ] && lng=$(head -n 1 "$configdir/force_lang")
 
 	menu_init "Language Selection"
 
-	for e in "${langsupport[@]}"
-	do
-		if [ "$lng" == "none" ]
-		then
+	for e in "${langsupport[@]}"; do
+		if [ "$lng" == "none" ]; then
 			[ "${LANG:0:2}" == "$e" ] && _stat="on" || _stat="off"
 		else
 			[ "$lng" == "$e" ] && _stat="on" || _stat="off"
 		fi
 
-		txt=$(head -3 "$tdir/$e" |tail -1)
-        # --- DEFENSIVE FIX: Add a fallback if the description is empty ---
-        [ -z "$txt" ] && txt="$e" # Use the language code (e.g., 'de') if description is missing.
+		txt=$(head -3 "$tdir/$e" | tail -1)
+		# --- DEFENSIVE FIX: Add a fallback if the description is empty ---
+		[ -z "$txt" ] && txt="$e" # Use the language code (e.g., 'de') if description is missing.
 		menu_add_option "$e" "$txt" "$_stat"
 	done
 
 	if menu_show_radiolist "18" "40"; then
 		selected_lang="$(menu_get_first_selection)"
-		if [ ! "${LANG:0:2}" == "$selected_lang" ]
-		then
-			for lng1 in "${langsupport[@]}"
-			do
-				if [ "$selected_lang" == "$lng1" ]
-				then
+		if [ ! "${LANG:0:2}" == "$selected_lang" ]; then
+			for lng1 in "${langsupport[@]}"; do
+				if [ "$selected_lang" == "$lng1" ]; then
 					echo "$selected_lang" >"$configdir/force_lang"
 				fi
 			done

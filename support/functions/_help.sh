@@ -1,24 +1,21 @@
 #!/bin/bash
 
-_help_toolchain(){
+_help_toolchain() {
 	printf "$w_l  toolchains :\n  ------------$g_n\n"
 	helpline1 "${AVAI_TCLIST[@]}"
 	printf "\n"
 }
 
-helpline0(){
+helpline0() {
 	ll=0
-	printf "  ";
-	for s in $(echo "$@" | xargs -n1 | sort -u | xargs)
-	do
+	printf "  "
+	for s in $(echo "$@" | xargs -n1 | sort -u | xargs); do
 
-		if [ ! "$s" == "USE_MCA" ] \
-		&& [ ! "$s" == "USE_LIBUSB" ] \
-		&& [ ! "$s" == "USE_CONFDIR" ]
-		then
+		if [ ! "$s" == "USE_MCA" ] &&
+			[ ! "$s" == "USE_LIBUSB" ] &&
+			[ ! "$s" == "USE_CONFDIR" ]; then
 			ll=$((ll + (${#s} + 4)))
-			if [ "$ll" -lt "30" ]
-			then
+			if [ "$ll" -lt "30" ]; then
 				printf "$s(_off) "
 			else
 				printf "$s(_off)\n  "
@@ -29,15 +26,13 @@ helpline0(){
 	done
 }
 
-helpline1(){
+helpline1() {
 	ll=0
 	printf "  "
-	for s in $(echo "$@" | xargs -n1 | sort -u | xargs)
-	do
+	for s in $(echo "$@" | xargs -n1 | sort -u | xargs); do
 
 		ll=$((ll + (${#s} + 4)))
-		if [ "$ll" -lt "45" ]
-		then
+		if [ "$ll" -lt "45" ]; then
 			printf "$s "
 		else
 			printf "$s\n  "
@@ -47,7 +42,7 @@ helpline1(){
 	done
 }
 
-_help(){
+_help() {
 	clear
 	s3logo
 	printf "  --------------------------------------\n"

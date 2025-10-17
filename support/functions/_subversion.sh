@@ -1,6 +1,6 @@
 #!/bin/bash
 
-repo_checkout_svn(){
+repo_checkout_svn() {
 	err_push_context "SVN checkout operation"
 	log_header "Starting SVN Checkout"
 
@@ -55,7 +55,7 @@ repo_checkout_svn(){
 	return 0
 }
 
-repo_update_svn(){
+repo_update_svn() {
 	err_push_context "SVN update operation"
 	log_header "Starting SVN Update"
 
@@ -91,47 +91,6 @@ repo_update_svn(){
 	return 0
 }
 
-# Function to log progress (replace direct command output piping)
-log_svn_progress() {
-	while read line filename; do
-		((++i)); PCT=$((100 * i / (nnn + 1)))
-		if [ "$PCT" -gt 0 ]; then
-			echo "$PCT"  # This will be piped to ui_show_progressbox
-		fi
-	done
-}
-
-_dialog_checkout1_svn(){
-	rm -rf "${repodir}" 2>/dev/null
-	COUNT=0
-	[ -z "$1" ] && rn=0 || rn="$1"
-	if [ "$rn" -ge "7000" ]
-	then
-		_rev="-r $rn"
-		sc_text="Revision: $rn"
-	else
-		_rev=''
-		sc_text="$txt_latest"
-	fi
-
-	# Get total file count for progress calculation
-	nnn="$(svn info -R "$URL_OSCAM_REPO" |grep "^URL: " |uniq |wc -l)"
-	i=0  # Initialize counter here
-
-	# Use ui_show_progressbox instead of direct gui call
-	{
-		svn co "$URL_OSCAM_REPO" "${repodir}" $_rev | sed "s@${repodir}@@g" | awk '{print $2}' | log_svn_progress
-	} | ui_show_progressbox " -[ ${REPO^^} Checkout $sc_text ]- " "Please wait while ${REPO^^} is checked out..."
-
-	# Post-checkout cleanup and config setup
-	cd "${repodir}"
-	if [ -f "${repodir}/config.sh" ]; then
-		validate_command "Resetting config" "${repodir}/config.sh" -R
-		[ -f "$ispatched" ] && rm -f "$ispatched"
-		_get_config_menu
-	fi
-}
-
-svnurl(){
+svnurl() {
 	svn info | sed -ne 's/^URL: //p'
 }

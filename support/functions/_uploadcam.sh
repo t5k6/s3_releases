@@ -1,6 +1,6 @@
 #!/bin/bash
 
-net_upload_cam_profile(){
+net_upload_cam_profile() {
 	err_push_context "Upload CAM operation"
 	clear
 	slogo
@@ -42,7 +42,8 @@ net_upload_cam_profile(){
 	fi
 
 	log_info "CAMNAME: $y_l$build_binary"
-	local file_size; file_size=$(stat -c%s "$bdir/$build_binary")
+	local file_size
+	file_size=$(stat -c%s "$bdir/$build_binary")
 	log_info "FILEDATE/SIZE: $(stat -c %y "$bdir/$build_binary" | awk '{print $1" " substr($2,1,8)}') / $(file_format_bytes "$file_size")"
 
 	# Upload the binary using abstracted network operations
@@ -67,7 +68,7 @@ net_upload_cam_profile(){
 		log_header "Replacing remote binary"
 		# Use here-doc for a clean, readable remote script
 		local replace_script
-		read -r -d '' replace_script << EOF
+		read -r -d '' replace_script <<EOF
 if [ ! -f "/tmp/$build_binary" ]; then
     echo "Uploaded binary not found on remote." >&2
     exit 1
