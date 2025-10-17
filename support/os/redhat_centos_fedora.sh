@@ -1,0 +1,226 @@
+#!/bin/bash
+
+redhat_os(){
+install_log="$ldir/os-install.log";
+failed=0;
+packages="";
+
+echo -n >"$install_log" &2>/dev/null;
+
+echo -e "$w_l\n  INSTALLATION\n  ============\n" | _log "$install_log";
+
+rh_version=$(sed -n 's/^[^0-9]*\([0-9][0-9]*\).*$/\1/p' /etc/redhat-release 2>/dev/null);
+! [[ $rh_version ]] && { echo -e "$r_l  System not recognised -> Abort!\n"; return 1; }
+
+sshpass_src="ftp://rpmfind.net/linux/dag/redhat/el6/en/x86_64/dag/RPMS/sshpass-1.05-1.el6.rf.x86_64.rpm";
+sshpass86_src="ftp://rpmfind.net/linux/dag/redhat/el6/en/i386/dag/RPMS/sshpass-1.05-1.el6.rf.i686.rpm";
+installer="yum";
+
+case $rh_version in
+	5)
+		echo -e "$r_l  Five - Has a too old glibc!"; return 1;
+		sshpass_src="ftp://rpmfind.net/linux/epel/5/x86_64/sshpass-1.05-1.el5.x86_64.rpm";
+		sshpass86_src="ftp://rpmfind.net/linux/epel/5/i386/sshpass-1.05-1.el5.i386.rpm";
+		;;
+	[6-7])
+		# Redhat/CentOS 6+7 ok
+		;;
+	[8-9])
+		# Redhat/CentOS 8 ok
+		installer="dnf";
+		;;
+	2?)
+		# Fedora 20+23 ok
+		installer="dnf";
+		;;
+	3?)
+		# Fedora 30+ ok
+		installer="dnf";
+		;;
+	*)
+		echo "This version is not supported!" >"$install_log" 2>/dev/null;
+		echo -e "$r_l  \"$(cat /etc/redhat-release)\" is not supported!";
+		return 1;
+esac
+
+# care about the repos on Redhat and CentOS
+if hash subscription-manager 2>/dev/null; then
+	$prefix "subscription-manager status" >/dev/null || { echo -e "$r_l  You need an active subscription!\n"; return 1; }
+	echo -e "$w_l  Retreiving repo list...";
+	if ! $prefix "subscription-manager repos --list-enabled | grep -q 'server-optional-rpms'"; then
+		cmdline="subscription-manager repos --enable rhel-$rh_version-server-optional-rpms; subscription-manager repos --enable codeready-builder-for-rhel-$rh_version-$(arch)-rpms;";
+		echo -e "$w_l  Add needed repo$g_l optional:$y_l $cmdline";
+		echo "+++ $(date): $cmdline" >> "$install_log";
+		$prefix "$cmdline" >> "$install_log" 2>&1 || failed=1;
+	fi
+fi
+$prefix "dnf config-manager --set-enabled crb" 2>/dev/null;
+
+for e in "${binvars[@]}";
+do
+	if [ "$e" == "autoconf-archive" ]; then
+		if [ ! -f "/usr/share/aclocal/ax_absolute_header.m4" ]; then
+			printf -v pad %40s; e=$e$pad; e=${e:0:16};
+			echo -e "$w_l  select $g_l$e$y_l from: $e";
+			packages+=" $e";
+		else
+			continue;
+		fi;
+	elif ! hash "$e" 2>/dev/null; then
+		inst="$e"; build="";
+		case $e in
+		upx)
+			build="upx deb installer"
+			inst="";
+			;;
+		xz)
+			inst="xz-utils";
+			[ "$rh_version" -gt 29 ] && inst="xz";
+			;;
+		makeinfo)
+			inst="texinfo";
+			;;
+		python3-config)
+			inst="python3-devel";
+			;;
+		libtool|libtoolize)
+			inst="libtool";
+			;;
+		g++)
+			inst="gcc-c++";
+			;;
+		composite)
+			inst="ImageMagick";
+			;;
+		cmp)
+			inst="diffutils";
+			;;
+		esac;
+		echo -e "$w_l  select $g_l$e$y_l\tfrom: $inst$build";
+		packages+=" $inst";
+		builder+=" $build"
+	fi;
+done;
+
+for e in "${headervars[@]}";
+do
+	e1=$(find /usr/include/* /usr/local/include/* 2>/dev/null | grep -wm1 "$e")
+	if [ ! ${#e1} -gt 8 ]; then
+		build="";
+		case $e in
+		crypto.h)
+				inst="openssl-devel";
+			;;
+		libusb.h)
+				# no official package for older versions
+				[ "$rh_version" -lt 6 ] && continue;
+				# hopelully they stick to it from now :-)
+				inst="libusbx-devel";
+				[ "$rh_version" == 6 ] && inst="libusb1-devel";
+			;;
+		pcsclite.h)
+				inst="pcsc-lite-devel";
+			;;
+		pthread.h)
+				inst="glibc-headers";
+			;;
+		dvbcsa.h)
+				build="libdvbcsa source builder";
+				inst="";
+			;;
+		ncurses)
+				inst="ncurses-devel";
+			;;
+		libacl.h)
+				inst="libacl-devel";
+			;;
+		sys/capability.h)
+				inst="libcap-devel";
+			;;
+		readline.h)
+				inst="readline-devel";
+			;;
+		glib-2.0/glib.h)
+				inst="glib2-devel";
+			;;
+		esac;
+		echo -e "$w_l  select $g_l$e$y_l\tfrom: $inst";
+		packages+=" $inst";
+		builder+=" $build"
+	fi;
+done;
+
+for e in "${libvars[@]}";
+do
+	e1=$(find /usr/lib* 2>/dev/null | grep -m1 "$e");
+	if [ ! ${#e1} -gt 8 ]; then
+		case $e in
+		libccidtwin.so)
+				inst="ccid";
+				[ "$rh_version" -gt 6 ] && inst="pcsc-lite-ccid";
+			;;
+		libstdc++.a)
+				inst="libstdc++-static";
+			;;
+		libc\\.a)
+				inst="glibc-static";
+			;;
+		esac;
+		echo -e "$w_l  select $g_l$e$y_l\tfrom: $inst";
+		packages+=" $inst";
+	fi;
+done;
+
+if [ "$(uname -m)" == "x86_64" ] && [ ! -f /usr/lib/libz.so ]; then
+	if [ ! -f /usr/lib/libz.so ]; then
+		e="zlib32";
+		inst="zlib-devel.i686";
+		echo -e "$w_l  select $g_l$e$y_l\tfrom: $inst";
+		packages+=" $inst";
+	fi
+fi
+
+packages="$(echo "$packages" | xargs)"
+if [ ${#packages} -gt 0 ]; then
+	echo -n -e "$w_l  update$g_l package list...";
+	echo "+++ $(date): $prefix $installer -y check-update" >> "$install_log"
+	$prefix "
+			$installer -y check-update;
+	" >> "$install_log" 2>&1;
+	echo -e "$y_l done";
+	echo -n -e "$w_l  install$g_l selected packages$y_l please wait...";
+	echo "+++ $(date): $prefix $installer -y install$packages" >> "$install_log"
+	$prefix "
+			$installer -y install $packages;
+	" >> "$install_log" 2>&1 || failed=1;
+	if [ $failed == 0 ]; then
+		echo -e "$y_l  done";
+	else
+		echo -e "$r_l  failed!";
+	fi
+fi
+
+# additional rpm
+if ! hash sshpass 2>/dev/null; then
+	[ "$(arch)" == "i686" ] && sshpass_src=$sshpass86_src;
+	echo -e "$w_l  install$g_l sshpass$y_l\tfrom: $sshpass_src";
+	echo "+++ $(date): $prefix rpm -i $sshpass_src" >> "$install_log";
+	$prefix "
+			rpm --nosignature -i $sshpass_src;
+	" >> "$install_log" 2>&1 || failed=1;
+fi
+
+if [[ "$builder" =~ upx ]]; then
+	echo -e "$w_l\n  INSTALL PRECOMPILED BINARY\n  ==========================" | _log "$install_log";
+	upx_native_installer
+fi
+
+if [[ "$builder" =~ libdvbcsa ]]; then
+	echo -e "$w_l\n  BUILD FROM SOURCE\n  =================" | _log "$install_log";
+	libdvbcsa_native_installer
+fi
+
+[ $failed == 1 ] && echo -e "\n$r_l  Installation with errors - see: $install_log";
+
+return $failed;
+}

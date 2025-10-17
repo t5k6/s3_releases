@@ -35,6 +35,10 @@ _s3_source_unified_functions() {
         fi
     done
 
+    # Reference the new unified configuration system
+    # Added in Phase 3 of Unified Configuration System implementation
+    # Provides secure key-value configuration loading and saving
+
     return 0
 }
 
@@ -81,8 +85,8 @@ _s3_migrate_function_names() {
     # Convert old patterns:
     #   Checkout -> work_repo_checkout
     #   gitcheckout -> work_git_checkout
-    #   ssh_exec -> net_ssh_exec
-    #   scp_upload -> net_scp_upload
+    #   net_ssh_execute -> net_ssh_exec
+    #   net_scp_upload -> net_scp_upload
     #   etc.
 
     true  # Placeholder for actual migration logic
@@ -114,7 +118,7 @@ _s3_migrate_network_operations() {
     # Update network operations
     log_debug "Updating network operations"
 
-    # Convert ssh_exec/scp_upload to net_ssh_execute/net_scp_upload
+    # Convert net_ssh_execute/net_scp_upload to net_ssh_execute/net_scp_upload
 
     true  # Placeholder for actual migration logic
 }
@@ -231,7 +235,7 @@ s3_integrate_unified_functions() {
     # Source all unified function files
     if ! _s3_source_unified_functions; then
         echo "ERROR: Failed to source unified functions"
-        log_fatal "Failed to source unified functions"
+        err_log_and_exit "Failed to source unified functions"
     fi
 
     # Ensure backward compatibility
@@ -240,7 +244,7 @@ s3_integrate_unified_functions() {
     # Validate integration
     if ! _s3_validate_integration; then
         echo "ERROR: Function integration validation failed"
-        log_fatal "Function integration validation failed"
+        err_log_and_exit "Function integration validation failed"
     fi
 
     # Apply migration if requested

@@ -1,9 +1,12 @@
 #!/bin/bash
 
+# Source dependencies
+source "$fdir/_error_handling.sh"
+
 ui_show_build_menu(){
 	[ "$loadprofile" == "yes" ] && load_config
 
-	local text="_________________________________________________________ \n $txt_bmenu_user = $(whoami)\n Toolchain       = $_toolchainname\n $txt_bmenu_comp = $_compiler""gcc\n $txt_bmenu_debu = CPU-Threads($(CPUS)) ${REPO^^}($($(USEGIT) && printf "$(COMMIT)" || printf "$(REVISION)")) SCRIPT(${SIMPLEVERSION}.${VERSIONCOUNTER})\n $txt_bmenu_use  = $(echo $USESTRING| sed -e 's/^[ \t]*//')\n _________________________________________________________ \n"
+	local text="_________________________________________________________ \n $txt_bmenu_user = $(whoami)\n Toolchain       = $_toolchainname\n $txt_bmenu_comp = $_compiler""gcc\n $txt_bmenu_debu = CPU-Threads($(sys_get_cpu_count)) ${REPO^^}($($(USEGIT) && printf "$(COMMIT)" || printf "$(REVISION)")) SCRIPT(${SIMPLEVERSION}.${VERSIONCOUNTER})\n $txt_bmenu_use  = $(echo $USESTRING| sed -e 's/^[ \t]*//')\n _________________________________________________________ \n"
 	local title=" -[ $txt_bmenu_title$(REPOIDENT) ]- "
 
 	menu_init "$text"
@@ -49,62 +52,131 @@ ui_show_build_menu(){
 			SAVE_PROFILE)
 				_save_profile;;
 			BACK | '')
-				ui_show_toolchain_selection_menu;;
+				ui_show_toolchain_main_menu;;
 			EXIT)
 				bye
 				exit;;
 		esac
 	else
 		# Handle cancel/ESC
-		ui_show_toolchain_selection_menu
+		ui_show_toolchain_main_menu
 	fi
 
 	ui_show_build_menu
 }
 
+# Helper function to create a checklist for a specific module category.
+# This function is the core of the new module configuration UI.
+# $1: Menu Title (e.g., "Addon Modules")
+# $2: Name of the array holding module short names (e.g., "SHORT_ADDONS")
+# $3: The flag for config.sh to get/set modules for this category (e.g., "addons")
+_ui_show_module_category_checklist() {
+    local menu_title="$1"
+    declare -n module_list="$2" # Use nameref to get the array by name
+    local config_sh_category="$3"
+
+    # Get currently enabled modules for this category
+    local enabled_modules
+    enabled_modules=$("${repodir}/config.sh" -s "$config_sh_category")
+
+    menu_init "$menu_title"
+
+    for module in "${module_list[@]}"; do
+        local internal_name; internal_name=$(get_module_name "$module")
+        local state="off"
+        # Check if the internal module name is in the list of enabled modules
+        if [[ " ${enabled_modules} " =~ " ${internal_name} " ]]; then
+            state="on"
+        fi
+        menu_add_option "$internal_name" "$module" "$state"
+    done
+
+    if menu_show_checkbox; then
+        local selected_options; selected_options=($(menu_get_selected_options))
+
+        # Atomically update the configuration: disable all, then enable selected.
+        # This prevents issues with modules being left in an incorrect state.
+        validate_command "Disabling all ${config_sh_category}" "${repodir}/config.sh" -D "$config_sh_category"
+        if [[ ${#selected_options[@]} -gt 0 ]]; then
+            validate_command "Enabling selected ${config_sh_category}" "${repodir}/config.sh" -E "${selected_options[@]}"
+        fi
+        log_info "Module configuration for '${config_sh_category}' updated."
+    fi
+}
+
+# Main menu for selecting which category of OScam modules to configure.
+# This replaces the call to the external 'config.sh -g' script.
+ui_show_module_selection_menu() {
+    while true; do
+        menu_init "Select Module Category to Configure"
+        menu_add_option "ADDONS" "Addon Modules"
+        menu_add_option "PROTOCOLS" "Protocol Modules"
+        menu_add_option "READERS" "Reader Modules"
+        menu_add_option "CARD_READERS" "Card Reader Modules"
+        menu_add_option "BACK" "Back to Configuration Menu"
+
+        if menu_show_list; then
+            local selection; selection="$(menu_get_first_selection)"
+            case "$selection" in
+                ADDONS) _ui_show_module_category_checklist "Addon Modules" "SHORT_ADDONS" "addons" ;;
+                PROTOCOLS) _ui_show_module_category_checklist "Protocol Modules" "SHORT_PROTOCOLS" "protocols" ;;
+                READERS) _ui_show_module_category_checklist "Reader Modules" "SHORT_READERS" "readers" ;;
+                CARD_READERS) _ui_show_module_category_checklist "Card Reader Modules" "SHORT_CARD_READERS" "card_readers" ;;
+                BACK) return 0 ;;
+            esac
+        else
+            return 0 # User pressed ESC/Cancel
+        fi
+    done
+}
+
+# --- REFACTORED FUNCTION ---
 ui_show_config_menu(){
-	[ "$loadprofile" == "yes" ] && load_config
+    # Use a loop for a more robust menu structure, replacing recursion.
+    while true; do
+        [ "$loadprofile" == "yes" ] && load_config
 
-	local text=" ADDONS :\n $(e_addons)\n\n PROTOCOLS :\n $(e_protocols)\n\n READERS :\n $(e_readers)\n\n CARD_READERS :\n $(e_card_readers)\n\n USE VARIABLES :\n $(echo $USESTRING| sed -e 's/^[ \t]*//')\n\n"
-	local title=" -[ $txt_config_menu$(REPOIDENT) ]- "
+        # PROBLEM: The multi-line 'text' variable was causing the dialog command to fail.
+        # SOLUTION: Use a simple, single-line prompt for the menu title, as the API intends.
+        # The detailed status is unnecessary here and was the source of the crash.
+        local menu_prompt="Select an OScam/Build configuration area to modify."
 
-	menu_init "$text"
-	menu_add_option "BACK" "$txt_back_build"
-	menu_add_option "OSCAM_MODULE" "$txt_module_configure"
-	menu_add_option "OSCAM_EXTRA" "$txt_oscam_extra"
-	menu_add_option "BUILD_EXTRA" "$txt_build_extra"
-	menu_add_option "SELECT_STAPI" "$txt_stapi"
-	menu_add_option "RESET" "$txt_build_reset"
+        menu_init "$menu_prompt" # Use the simple prompt
+        menu_add_option "OSCAM_MODULE" "$txt_module_configure"
+        menu_add_option "OSCAM_EXTRA" "$txt_oscam_extra"
+        menu_add_option "BUILD_EXTRA" "$txt_build_extra"
+        menu_add_option "SELECT_STAPI" "$txt_stapi"
+        menu_add_option "RESET" "$txt_build_reset"
+        menu_add_option "BACK" "$txt_back_build"
 
-	if menu_show_list; then
-		local selection
-		selection="$(menu_get_first_selection)"
+        if menu_show_list; then
+            local selection
+            selection="$(menu_get_first_selection)"
 
-		case "$selection" in
-			BACK | '')
-				save_config
-				ui_show_build_menu;;
-			OSCAM_EXTRA)
-				_oscam_extra_menu;;
-			BUILD_EXTRA)
-				_build_extra_menu;;
-			OSCAM_MODULE)
-				eval "${repodir}/config.sh -g" 2>/dev/null
-				save_config;;
-			SELECT_STAPI)
-				_stapi_select;;
-			RESET)
-				_reset_config
-				load_config
-				ui_show_config_menu;;
-		esac
-	else
-		# Handle cancel/ESC - go back to build menu
-		save_config
-		ui_show_build_menu
-	fi
-
-	ui_show_config_menu
+            case "$selection" in
+                OSCAM_MODULE)
+                    # Replace the direct, non-compliant call to config.sh with the new unified UI function.
+                    ui_show_module_selection_menu
+                    cfg_save_build_profile;;
+                OSCAM_EXTRA)
+                    _oscam_extra_menu;;
+                BUILD_EXTRA)
+                    _build_extra_menu;;
+                SELECT_STAPI)
+                    _stapi_select;;
+                RESET)
+                    _reset_config
+                    load_config;;
+                BACK | '')
+                    cfg_save_build_profile
+                    return 0;;
+            esac
+        else
+            # Handle cancel/ESC - go back to the previous menu.
+            cfg_save_build_profile
+            return 0
+        fi
+    done
 }
 
 ui_show_toolchain_main_menu(){
@@ -127,6 +199,7 @@ ui_show_toolchain_main_menu(){
         for i in "${INST_TCLIST[@]}"; do
             if [ ! "$i" == "native" ]; then
                 unset _self_build
+                # Use legacy source for now, as .cfg files are not clean key-value pairs
                 source "$tccfgdir/$i"
                 if [ "$systype" == "ok" -o "$_self_build" == "yes" ]; then
                     menu_add_option "$_toolchainname" "$_description"
@@ -144,13 +217,16 @@ ui_show_toolchain_main_menu(){
             EXIT) bye ;;
             BACK | '') _select_menu ;;
             ADD) ui_show_toolchain_add_menu ;;
-            CREATE) tcupdate "-c" "" "" "1"; ui_show_toolchain_selection_menu ;;
+            CREATE) tcupdate "-c" "" "" "1"; ui_show_toolchain_main_menu ;;
             REMOVE) ui_show_toolchain_remove_menu ;;
             *)
                 # Handle HELP for specific toolchains (TODO: add proper help support)
                 #resetting all optional config variables
                 unset _stagingdir _androidndkdir _self_build extra_use extra_cc extra_ld extra_c stapi_allowed stapi_lib_custom
-                [ -f "$tccfgdir/$selection" ] && stapi_allowed="" && source "$tccfgdir/$selection" || exit
+                # Attempt to use the new system, fall back to legacy source
+                if ! cfg_load_file "toolchain" "$tccfgdir/$selection"; then
+                    source "$tccfgdir/$selection"
+                fi
 				loadprofile="yes"
 				ui_show_build_menu "$selection" ;;
         esac
@@ -158,14 +234,6 @@ ui_show_toolchain_main_menu(){
         # Handle cancel/ESC
         _select_menu
     fi
-}
-
-get_toolchain_config(){
-	get_toolchain_list
-	for ((i=0;i<${#toolchain_list[@]};i++))
-	do
-		[ "${toolchain_list[$i]}" == "$1" ] && source "$sdir/toolchain.cfgs/$1"
-	done
 }
 
 _load_toolchain(){
@@ -184,20 +252,37 @@ _load_toolchain(){
 	_pget
 }
 
-get_toolchain_list(){
-	[ -d "$sdir/toolchain.cfgs" ] && cd "$sdir/toolchain.cfgs" || printf " please fix $sdir/toolchain.cfgs"
-	toolchain_list=()
-	toolchain_list+=('native')
-	toolchain_list+=(*)
-	cd "$workdir"
-}
+# New private helper function for consistent toolchain extraction
+_toolchain_extract_archive() {
+    local toolchain_name="$1"
+    local archive_path="$2"
+    local strip_count="$3"
+    local dest_dir="$tcdir/$toolchain_name"
 
-_console_extract_toolchain(){
-	[ -d "$tcdir/$_toolchainname" ] && rm -rf "$tcdir/$_toolchainname"
-	mkdir "$tcdir/$_toolchainname"
-	cd "$tcdir/$_toolchainname"
-	tar -xf "$tc_dl" --strip-components=$_extract_strip
-	printf "\r$w_l    $txt_extracting :$g_l$txt_done!                             \n\n"
+    err_init "Extracting toolchain $toolchain_name"
+
+    log_info "Preparing destination: $dest_dir"
+    validate_command "Removing old directory" rm -rf "$dest_dir"
+    validate_command "Creating new directory" mkdir -p "$dest_dir"
+
+    local strip_arg=""
+    if [[ "$strip_count" -gt 0 ]]; then
+        strip_arg="--strip-components=$strip_count"
+    fi
+
+    log_info "Extracting archive $(basename "$archive_path")..."
+
+    # Use tar directly piped to the UI progress box. Check PIPE_STATUS for tar's exit code.
+    (
+        tar -xf "$archive_path" -C "$dest_dir" "$strip_arg"
+    ) | ui_show_progressbox "Extracting Toolchain" "Extracting $(basename "$archive_path")"
+
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        log_fatal "Failed to extract toolchain archive '$archive_path'." "$EXIT_ERROR"
+    fi
+
+    log_info "Extraction complete."
+    return 0
 }
 
 _toolchain_check(){
@@ -215,8 +300,7 @@ _toolchain_check(){
 		cd "$tcdir/$1/bin"
 	else
 		log_error "Toolchain '$1' is not installed"
-		log_error_context
-		exit
+		err_log_and_exit "Toolchain not found" "$EXIT_MISSING"
 	fi
 
 	printf "$w_l  Compiler info -----> $C$1$w_l\n  ====================\n"
@@ -296,81 +380,79 @@ _toolchain_check(){
 	exit
 }
 
-_toolchain_repair(){
-	push_error_context "Toolchain repair operation"
-	clear
-	log_info "Starting toolchain repair for: $1"
-	s3logo
-	cd $dldir
-	zzusatz=0
-	szusatz=0
-	_extract_strip="0"
-	[ -f "$tccfgdir/$1" ] && source "$tccfgdir/$1"
+sys_repair_toolchain() {
+    local toolchain_name="$1"
+    err_push_context "Toolchain repair operation for '$toolchain_name'"
+    clear
+    s3logo
 
-	fn=$(echo $_md5sum |awk '{ printf $2 }')
+    if ! cfg_load_file "toolchain" "$tccfgdir/$toolchain_name"; then
+        log_fatal "Failed to load toolchain configuration for '$toolchain_name'." "$EXIT_INVALID_CONFIG"
+    fi
 
-	if [ ${#_md5sum} -lt 1 ]
-	then
-		log_error "MD5 checksum not found in $1 config"
-		pop_error_context
-		exit
-	fi
+    local md5sum_string
+    md5sum_string=$(cfg_get_value "toolchain" "_md5sum")
+    if [[ -z "$md5sum_string" ]]; then
+        log_fatal "MD5 checksum not defined in '$toolchain_name' config." "$EXIT_INVALID_CONFIG"
+    fi
 
-	if [ -f $fn ]
-	then
-		md5file=$(mktemp)
-		printf "$_md5sum\n" > $md5file
-		answer=$(md5sum -c $md5file 2>&1)
+    local expected_md5
+    local archive_filename
+    expected_md5=$(echo "$md5sum_string" | awk '{print $1}')
+    archive_filename=$(echo "$md5sum_string" | awk '{print $2}')
+    local archive_path="$dldir/$archive_filename"
 
-		if [ "$answer" == "$fn: OK" ]
-		then
-			printf $w_l"  Toolchain md5 check :$g_l ok\n"
-			printf $w_l
-			tc_dl="$dldir/$fn"
-			printf $w_l"  Toolchain repair    :$y_l $txt_wait$g_l"
-			_console_extract_toolchain
-			tput cup 10 0
-			printf $w_l"  Toolchain repair    :$g_l ok                           \n\n"
-		else
-			printf $w_l"  Toolchain md5 check :$r_l fail\n"
-			zzusatz=-1
-			szusatz=8
-			printf $w_l"  Toolchain download  :$g_l\n"
-			dln=$fn
-			_pget
-			tput cup 10 22
-			printf $w_l":$g_l ok                                       \n"
-			printf $w_l"  Toolchain repair    :$y_l $txt_wait$g_l"
-			_console_extract_toolchain
-			tput cup 10 23
-			printf "$g_l ok                        \n"
-			tput cup 11 23
-			printf "$g_l ok                        \n"
-			_nl
-			exit
-		fi
+    local needs_download=true
+    if [[ -f "$archive_path" ]]; then
+        log_header "Verifying Local Archive"
+        log_info "Archive '$archive_filename' found locally. Verifying checksum..."
 
-	else
-		printf $w_l"  Toolchain Filename :$y_l $fn\n"
-		printf $w_l"  Toolchain download :$g_l"
-		zzusatz=-1
-		szusatz=7
-		dln=$fn
-		_pget
-		tput cup 10 22
-		printf "$g_l ok                                       \n"
-		sleep 1
-		printf $w_l"  Toolchain repair   :$y_l $txt_wait$g_l"
-		zzusatz=2
-		szusatz=7
-		_console_extract_toolchain
-		tput cup 10 22
-		printf "$g_l ok                                       \n"
-		tput cup 11 22
-		printf "$g_l ok                                       \n"
-		_nl
-		exit
-	fi
+        local actual_md5
+        actual_md5=$(md5sum "$archive_path" | awk '{print $1}')
+
+        if [[ "$actual_md5" == "$expected_md5" ]]; then
+            log_info "MD5 check successful. Skipping download."
+            needs_download=false
+        else
+            log_warn "MD5 check failed. Removing corrupted archive and re-downloading."
+            validate_command "Removing corrupted archive" rm -f "$archive_path"
+        fi
+    fi
+
+    if [[ "$needs_download" == true ]]; then
+        local toolchain_url_b64
+        toolchain_url_b64=$(cfg_get_value "toolchain" "_toolchainfilename")
+        if [[ -z "$toolchain_url_b64" ]]; then
+            log_fatal "Toolchain URL not defined in '$toolchain_name' config." "$EXIT_INVALID_CONFIG"
+        fi
+
+        local toolchain_url
+        toolchain_url=$(decode "$toolchain_url_b64")
+
+        log_header "Downloading Toolchain: $archive_filename"
+        if ! net_download_file "$toolchain_url" "$archive_path" "ui_show_progressbox 'Downloading Toolchain' 'Downloading $archive_filename'"; then
+            log_fatal "Failed to download toolchain from '$toolchain_url'." "$EXIT_NETWORK"
+        fi
+
+        log_info "Download complete. Verifying checksum..."
+        if ! md5sum -c <<<"$expected_md5  $archive_path" >/dev/null 2>&1; then
+            log_fatal "Checksum validation failed after download for '$archive_path'." "$EXIT_ERROR"
+        fi
+        log_info "Checksum for downloaded file is correct."
+    fi
+
+    log_header "Installing Toolchain: $toolchain_name"
+    local extract_strip
+    extract_strip=$(cfg_get_value "toolchain" "_extract_strip" "0")
+
+    if ! _toolchain_extract_archive "$toolchain_name" "$archive_path" "$extract_strip"; then
+        log_fatal "Toolchain extraction failed." "$EXIT_ERROR"
+    fi
+
+    log_info "Toolchain '$toolchain_name' has been successfully repaired."
+    err_pop_context
+    sleep 2
+    return 0
 }
 
 ui_show_toolchain_add_menu(){
@@ -383,6 +465,7 @@ ui_show_toolchain_add_menu(){
 
     for i in "${MISS_TCLIST[@]}"; do
         if [ ! "$i" == "native" ]; then
+            # Use legacy source for now, as .cfg files are not clean key-value pairs
             source "$tccfgdir/$i"
             menu_add_option "$_toolchainname" "$_description"
         fi
@@ -399,11 +482,11 @@ ui_show_toolchain_add_menu(){
                 # Install selected toolchain
                 first="$selection"
                 ui_install_toolchain_interactive
-                ui_show_toolchain_selection_menu ;;
+                ui_show_toolchain_main_menu ;;
         esac
     else
         # Handle cancel/ESC
-        ui_show_toolchain_selection_menu
+        ui_show_toolchain_main_menu
     fi
 }
 
@@ -418,6 +501,7 @@ ui_show_toolchain_remove_menu(){
     if [ "$tcempty" == "0" ]; then
         for i in "${INST_TCLIST[@]}"; do
             if [ ! "$i" == "native" ]; then
+                # Use legacy source for now, as .cfg files are not clean key-value pairs
                 source "$tccfgdir/$i"
                 menu_add_option "$_toolchainname" "$_description"
             fi
@@ -442,31 +526,59 @@ ui_show_toolchain_remove_menu(){
     fi
 }
 
-ui_install_toolchain_interactive(){
-	_extract_strip="0"
-	source "$tccfgdir/$first"
+ui_install_toolchain_interactive() {
+    local toolchain_name="$first" # 'first' is a global from the menu selection
+    err_push_context "Toolchain UI installation for '$toolchain_name'"
 
-	url="$(decode "$_toolchainfilename")"
-	tcname="$(basename $url)"
+    if ! cfg_load_file "toolchain" "$tccfgdir/$toolchain_name"; then
+        log_fatal "Failed to load toolchain configuration for '$toolchain_name'." "$EXIT_INVALID_CONFIG"
+    fi
 
-	if [ ! -f "$dldir/$tcname" ] || [ ! -z "$1" ]
-	then
-		cd "$dldir"
-		rm -f "$tcname"
-		# Use net_download_file progress display
-		net_download_file "$url" "$tcname" "ui_show_progressbox \"Downloading Toolchain\" \"Downloading $tcname\""
-	fi
+    local md5sum_string; md5sum_string=$(cfg_get_value "toolchain" "_md5sum")
+    if [[ -z "$md5sum_string" ]]; then
+        log_fatal "MD5 checksum not defined in '$toolchain_name' config." "$EXIT_INVALID_CONFIG"
+    fi
 
-	if [ -f "$dldir/$tcname" ]
-	then
-		[ -d "$tcdir/$first" ] && rm -rf "$tcdir/$first" && printf "$txt_delete $tcdir/$first"
-		mkdir "$tcdir/$first"
-		cd "$tcdir/$first"
-		# Use file_extract_archive with ui_show_progressbox
-		file_extract_archive "$dldir/$tcname" "." ui_show_progressbox "Extracting Toolchain" "Extracting $tcname"
-	else
-		printf "$r_l  $txt_error:$y_l $stcname$w_l Toolchain $txt_no_download""$rs_"
-	fi
+    local expected_md5; expected_md5=$(echo "$md5sum_string" | awk '{print $1}')
+    local archive_filename; archive_filename=$(echo "$md5sum_string" | awk '{print $2}')
+    local archive_path="$dldir/$archive_filename"
+
+    local needs_download=true
+    if [[ -f "$archive_path" ]]; then
+        local actual_md5; actual_md5=$(md5sum "$archive_path" | awk '{print $1}')
+        if [[ "$actual_md5" == "$expected_md5" ]]; then
+            needs_download=false
+        else
+            ui_show_msgbox "Checksum Mismatch" "Local archive is corrupt. Re-downloading." "6" "70"
+            rm -f "$archive_path" || log_fatal "Failed to remove corrupt archive." "$EXIT_ERROR"
+        fi
+    fi
+
+    if [[ "$needs_download" == true ]]; then
+        local toolchain_url_b64; toolchain_url_b64=$(cfg_get_value "toolchain" "_toolchainfilename")
+        if [[ -z "$toolchain_url_b64" ]]; then
+            log_fatal "Toolchain URL not defined in '$toolchain_name' config." "$EXIT_INVALID_CONFIG"
+        fi
+        local toolchain_url; toolchain_url=$(decode "$toolchain_url_b64")
+
+        if ! net_download_file "$toolchain_url" "$archive_path" "ui_show_progressbox 'Downloading Toolchain' 'Downloading $archive_filename'"; then
+            log_fatal "Failed to download toolchain from '$toolchain_url'." "$EXIT_NETWORK"
+        fi
+
+        if ! md5sum -c <<<"$expected_md5  $archive_path" &>/dev/null; then
+            log_fatal "Checksum validation failed after download for '$archive_path'." "$EXIT_ERROR"
+        fi
+    fi
+
+    local extract_strip; extract_strip=$(cfg_get_value "toolchain" "_extract_strip" "0")
+
+    if ! _toolchain_extract_archive "$toolchain_name" "$archive_path" "$extract_strip"; then
+        log_fatal "Toolchain extraction failed." "$EXIT_ERROR"
+    fi
+
+    ui_show_msgbox "Success" "Toolchain '$toolchain_name' has been successfully installed." "6" "70"
+    err_pop_context
+    return 0
 }
 
 _libc_version(){
@@ -566,4 +678,16 @@ _get_compiler_arch(){
 			ret="$("./$compilername" -dumpmachine | awk -F'-' '{print $1}' | xargs)";;
 	esac;
 	printf "$ret"
+}
+
+cfg_load_toolchain_config() {
+    local toolchain_name="$1"
+    local config_path="$tccfgdir/$toolchain_name"
+    if [[ -f "$config_path" ]]; then
+        source "$config_path"
+        return 0
+    else
+        log_error "Toolchain config not found: $config_path"
+        return 1
+    fi
 }

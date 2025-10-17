@@ -36,6 +36,9 @@ menu_add_option() {
     local option_text="$2"
     local state="${3:-off}" # on/off/disabled
 
+    # Replace newline characters in option text to prevent dialog argument errors
+    option_text="${option_text//$'\n'/ }"
+
     if [ "$_MENU_OPTION_COUNT" -gt 0 ]; then
         _MENU_OPTIONS_LIST[${_MENU_OPTION_COUNT}]="${option_id}#${option_text}#${state}"
     else
@@ -56,67 +59,76 @@ menu_add_separator() {
 # MENU DISPLAY FUNCTIONS
 # ------------------------------------------------------------------------------
 
-menu_show_checkbox() {
-    # Display checklist (multiple selection)
-    local height="${1:-$(( _MENU_OPTION_COUNT + 4 ))}"
-    local width="${2:-75}"
-    local auto_size="${3:-false}"
+_menu_show_internal() {
+    local menu_type="$1"
+    local height="$2"
+    local width="$3"
+    shift 3
 
-    if [ "$auto_size" = "true" ]; then
-        height="$(( _MENU_OPTION_COUNT + 8 ))"
-        width="$(( $(menu_get_max_option_length) + 10 ))"
-        [ "$width" -lt 50 ] && width=50
-        [ "$height" -lt 10 ] && height=10
-        [ "$height" -gt 20 ] && height=20
+    # --- ARCHITECTURAL FIX: Build arguments in an array ---
+    # This is a robust replacement for the fragile `IFS` method. It correctly
+    # handles empty strings and spaces within arguments.
+    local cmd_args=("$gui" "$st_" "$bt_" "$title_" "$menu_type" "$_MENU_TITLE" "$height" "$width")
+
+    case "$menu_type" in
+        --checklist|--radiolist|--menu)
+            # These types require the item count as an argument
+            cmd_args+=("$_MENU_OPTION_COUNT")
+            ;;
+    esac
+
+    # Manually parse each item and add its parts to the command array
+    for item_str in "${_MENU_OPTIONS_LIST[@]}"; do
+        local tag text state
+        tag=$(echo "$item_str" | cut -d'#' -f1)
+        text=$(echo "$item_str" | cut -d'#' -f2)
+        if [[ "$menu_type" == "--menu" ]]; then
+            cmd_args+=("$tag" "$text")
+        else
+            state=$(echo "$item_str" | cut -d'#' -f3)
+            cmd_args+=("$tag" "$text" "$state")
+        fi
+    done
+
+    log_debug "Executing dialog for menu: '$_MENU_TITLE'"
+
+    # Execute and capture output and stderr
+    local dialog_stderr_file
+    dialog_stderr_file=$(mktemp /tmp/s3_dialog_stderr.XXXXXX)
+    _MENU_SELECTED_OPTION=$("${cmd_args[@]}" 2> "$dialog_stderr_file")
+    local exit_code=$?
+    local dialog_stderr
+    dialog_stderr=$(<"$dialog_stderr_file")
+    rm -f "$dialog_stderr_file"
+
+    if [[ "$exit_code" -ne 0 && "$exit_code" -ne 1 ]]; then # Exit code 1 is Cancel/ESC, which is not an error
+        log_error "Menu system failed (dialog exit code: $exit_code) for menu '$_MENU_TITLE'."
+        [[ -n "$dialog_stderr" ]] && log_error "Dialog's own error message was: '$dialog_stderr'"
+        log_error "The full command that failed was (arguments printed one per line for clarity):"
+        printf "    %s\n" "${cmd_args[@]}" | while IFS= read -r line; do log_error "    '${line//$'\n'/ }'"; done
+        return "$exit_code"
     fi
 
-    IFS='#'
-    _MENU_SELECTED_OPTION="$("$gui" "$st_" "$bt_" "$title_" --checklist "$_MENU_TITLE" \
-        "$height" "$width" "$_MENU_OPTION_COUNT" ${_MENU_OPTIONS_LIST[*]})"
-    local exit_code=$?
-    IFS=$OIFS
+    return "$exit_code"
+}
 
-    err_check_command_result "$exit_code" "Menu selection"
-    return "$?"
+
+menu_show_checkbox() {
+    local height="${1:-$(( _MENU_OPTION_COUNT + 8 ))}"
+    local width="${2:-75}"
+    _menu_show_internal "--checklist" "$height" "$width"
 }
 
 menu_show_radiolist() {
-    # Display radiolist (single selection)
-    local height="${1:-$(( _MENU_OPTION_COUNT + 4 ))}"
+    local height="${1:-$(( _MENU_OPTION_COUNT + 8 ))}"
     local width="${2:-75}"
-    local auto_size="${3:-false}"
-
-    if [ "$auto_size" = "true" ]; then
-        height="$(( _MENU_OPTION_COUNT + 8 ))"
-        width="$(( $(menu_get_max_option_length) + 10 ))"
-        [ "$width" -lt 50 ] && width=50
-        [ "$height" -lt 10 ] && height=10
-        [ "$height" -gt 20 ] && height=20
-    fi
-
-    IFS='#'
-    _MENU_SELECTED_OPTION="$("$gui" "$st_" "$bt_" "$title_" --radiolist "$_MENU_TITLE" \
-        "$height" "$width" "$_MENU_OPTION_COUNT" ${_MENU_OPTIONS_LIST[*]})"
-    local exit_code=$?
-    IFS=$OIFS
-
-    err_check_command_result "$exit_code" "Radio menu selection"
-    return "$?"
+    _menu_show_internal "--radiolist" "$height" "$width"
 }
 
 menu_show_list() {
-    # Display regular menu list
-    local height="${1:-$(( _MENU_OPTION_COUNT + 4 ))}"
+    local height="${1:-$(( _MENU_OPTION_COUNT + 8 ))}"
     local width="${2:-75}"
-
-    IFS='#'
-    _MENU_SELECTED_OPTION="$("$gui" "$st_" "$bt_" "$title_" --menu "$_MENU_TITLE" \
-        "$height" "$width" "$_MENU_OPTION_COUNT" ${_MENU_OPTIONS_LIST[*]})"
-    local exit_code=$?
-    IFS=$OIFS
-
-    err_check_command_result "$exit_code" "Menu list selection"
-    return "$?"
+    _menu_show_internal "--menu" "$height" "$width"
 }
 
 # ------------------------------------------------------------------------------
@@ -138,7 +150,8 @@ menu_get_selected_options() {
 menu_is_option_selected() {
     # Check if specific option is selected
     local option_id="$1"
-    local selected_options="$(_MENU_SELECTED_OPTION)"
+    local selected_options
+    selected_options="$_MENU_SELECTED_OPTION"
     local option
 
     for option in $selected_options; do
@@ -153,7 +166,8 @@ menu_is_option_selected() {
 
 menu_get_first_selection() {
     # Get first selected option (for radiolist/single selection)
-    local selected_options="$(_MENU_SELECTED_OPTION)"
+    local selected_options
+    selected_options="$_MENU_SELECTED_OPTION"
     local first_option
 
     first_option="$(echo "$selected_options" | awk '{print $1}' | sed 's/^"\(.*\)"$/\1/')"

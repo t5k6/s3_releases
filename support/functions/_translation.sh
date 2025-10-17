@@ -53,10 +53,12 @@ lang_select(){
 		fi
 
 		txt=$(head -3 "$tdir/$e" |tail -1)
+        # --- DEFENSIVE FIX: Add a fallback if the description is empty ---
+        [ -z "$txt" ] && txt="$e" # Use the language code (e.g., 'de') if description is missing.
 		menu_add_option "$e" "$txt" "$_stat"
 	done
 
-	if menu_show_radiolist "${COUNT+7}" "40"; then
+	if menu_show_radiolist "18" "40"; then
 		selected_lang="$(menu_get_first_selection)"
 		if [ ! "${LANG:0:2}" == "$selected_lang" ]
 		then

@@ -58,7 +58,7 @@ _load_profile(){
 		else
 			# Cancel/ESC pressed - return to build menu
 			loadprofile="yes"
-			_toolchain_build_menu
+			ui_show_build_menu
 			return
 		fi
 

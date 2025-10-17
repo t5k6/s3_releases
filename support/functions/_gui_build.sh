@@ -6,15 +6,18 @@ _gui_build(){
 	oc_size=${#_oscamconfdir_custom}
 	[ "$oc_size" -gt "4" ] && _oscamconfdir_default="$_oscamconfdir_custom"
 
+    local timestamp
+    timestamp=$(date +%F.%H-%M-%S) # Format: YYYY-MM-DD.HH-MM-SS
+
 	if [ "$_toolchainname" == "native" ]
 	then
-		log_name="$(date +%F).$(date +%X).$(hostname).log"
+		log_name="${timestamp}.$(hostname).log"
 	else
-		log_name="$(date +%F).$(date +%X).$_toolchainname.log"
+		log_name="${timestamp}.$_toolchainname.log"
 	fi
 
 	ologo >"$ldir/$log_name"
-	[ -f "$configdir/max_cpus" ] && cpus="$(cat "$configdir/max_cpus")" || cpus="$(CPUS)"
+	[ -f "$configdir/max_cpus" ] && cpus="$(cat "$configdir/max_cpus")" || cpus="$(sys_get_cpu_count)"
 
 	CROSS="$tcdir/$_toolchainname/bin/$_compiler"
 	SYSROOT="$(realpath -sm $tcdir/$_toolchainname/$_sysroot)"
@@ -34,7 +37,7 @@ _gui_build(){
 	statcount=0
 
 #fix streamrelay case
-	check_streamrelay
+	build_check_streamrelay_deps
 
 #do use_vars
 	for e2 in $USESTRING
@@ -141,12 +144,15 @@ _gui_build(){
 	USESTRING_=${USE_vars[@]}
 	EXTRA_USE=$extra_use
 	timer_start
-	run_with_logging "$ldir/$log_name" $_make -j"$cpus" \
-		"CONF_DIR=$_oscamconfdir_default" "OSCAM_BIN=$bdir/$oscam_name" "CC_OPTS=$co $cc_opts $extra_cc" "CC_WARN=$cc_warn" "EXTRA_LDFLAGS=$extra_ld" "EXTRA_CFLAGS=$extra_c" $EXTRA_USE $COMP_LEVEL "CROSS=$CROSS" $stapivar $USESTRING_ $LIBCRYPTO_LIB $SSL_LIB $LIBUSB_LIB $PCSC_LIB $LIBDVBCSA_LIB \
-		\|grep --line-buffered -v 'BFD\|^/' \
-		\|grep --line-buffered '^CC\|^HOSTCC\|^GEN\|^CONF\|^RM\|^UPX\|^SIGN\|UseFlags\|  CONF_DIR =\|Binary\|LINK\|STRIP\|BUILD\|Addons\|Protocols\|Readers\|CardRdrs\|^/' \
-		\|sed -u "s/^|/ |/g;/^[[:space:]]*[[:digit:]]* ->/ s/./ |  UPX   > &/;s/^RM/ |  REMOVE>/g;s/^CONF/ |  CONFIG>/g;s/^LINK/ |  LINK  >/g;s/^STRIP/ |  STRIP >/g;s/^CC\|^HOSTCC\|^BUILD/ |  BUILD >/g;s/^GEN/ |  GEN   >/g;s/^UPX/ |  UPX   >/g;s/^SIGN/ |  SIGN  >/g;
-		s/WEBIF_//g;s/WITH_//g;s/MODULE_//g;s/CS_//g;s/HAVE_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g;s/= /: /g;"
+	_build_pipeline() {
+		$_make -j"$cpus" \
+			"CONF_DIR=$_oscamconfdir_default" "OSCAM_BIN=$bdir/$oscam_name" "CC_OPTS=$co $cc_opts $extra_cc" "CC_WARN=$cc_warn" "EXTRA_LDFLAGS=$extra_ld" "EXTRA_CFLAGS=$extra_c" $EXTRA_USE $COMP_LEVEL "CROSS=$CROSS" $stapivar $USESTRING_ $LIBCRYPTO_LIB $SSL_LIB $LIBUSB_LIB $PCSC_LIB $LIBDVBCSA_LIB \
+			|grep --line-buffered -v 'BFD\|^/' \
+			|grep --line-buffered '^CC\|^HOSTCC\|^GEN\|^CONF\|^RM\|^UPX\|^SIGN\|UseFlags\|  CONF_DIR =\|Binary\|LINK\|STRIP\|BUILD\|Addons\|Protocols\|Readers\|CardRdrs\|^/' \
+			|sed -u "s/^|/ |/g;/^[[:space:]]*[[:digit:]]* ->/ s/./ |  UPX   > &/;s/^RM/ |  REMOVE>/g;s/^CONF/ |  CONFIG>/g;s/^LINK/ |  LINK  >/g;s/^STRIP/ |  STRIP >/g;s/^CC\|^HOSTCC\|^BUILD/ |  BUILD >/g;s/^GEN/ |  GEN   >/g;s/^UPX/ |  UPX   >/g;s/^SIGN/ |  SIGN  >/g;
+			s/WEBIF_//g;s/WITH_//g;s/MODULE_//g;s/CS_//g;s/HAVE_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g;s/= /: /g;"
+	}
+	run_with_logging "$ldir/$log_name" _build_pipeline
 	timer_stop
 	timer_calc
 
@@ -193,9 +199,8 @@ _gui_build(){
 	ln -frs "$ldir/$log_name" "$workdir/lastbuild.log"
 	[ -f "$targztmp" ] && rm -rf "$targztmp"
 
-#build error handling - check for errors in log and fail if found
-	error_on_build=$(grep -c1 error "$ldir/$log_name")
-	if [ "$error_on_build" -gt "0" ]; then
-		log_fatal "GUI build failed with errors" "$EXIT_ERROR"
+#build error handling - check exit code from run_with_logging and fail if needed
+	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+		log_fatal "Build failed for $_toolchainname. See log for details: $ldir/$log_name" "$EXIT_ERROR"
 	fi
 }

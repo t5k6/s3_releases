@@ -1,7 +1,11 @@
 #!/bin/bash
 
 repo_checkout(){
-	$(USEGIT) && repo_checkout_git $@ || repo_checkout_svn $@
+	if $(USEGIT); then
+		repo_checkout_git "$@"
+	else
+		repo_checkout_svn "$@"
+	fi
 }
 
 repo_clean(){
@@ -82,7 +86,11 @@ repo_restore(){
 }
 
 repo_update(){
-	$(USEGIT) && repo_update_git $@ || repo_update_svn $@
+	if $(USEGIT); then
+		repo_update_git "$@"
+	else
+		repo_update_svn "$@"
+	fi
 }
 
 repo_restore_quick(){
@@ -162,7 +170,7 @@ _dialog_checkout(){
 		printf  " $txt_verify_svn "
 		if [ -f "${repodir}/config.sh" ]
 		then
-			if check_url "$trunkurl" >/dev/null
+			if check_url "$URL_OSCAM_REPO" >/dev/null
 			then
 				printf "ok\n"
 				sleep 1
@@ -181,7 +189,7 @@ _dialog_checkout(){
 	then
 		upc1=$(cat "$upc" 2>/dev/null)
 		rm -f "$upc"
-		[ ! "$upc1" == "1" ] && check_url "$trunkurl" && _dialog_checkout1
+		[ ! "$upc1" == "1" ] && check_url "$URL_OSCAM_REPO" && _dialog_checkout1
 
 		if [ -f "${repodir}/config.sh" ]
 		then
@@ -210,38 +218,47 @@ _dialog_checkout(){
 }
 
 _dialog_checkout1(){
-	$(USEGIT) && _dialog_checkout1_git $@ || _dialog_checkout1_svn $@
+	if $(USEGIT); then
+		_dialog_checkout1_git "$@"
+	else
+		_dialog_checkout1_svn "$@"
+	fi
 }
 
 repo_get_revision(){
-	if [ -d "${repodir}" ] && cd "${repodir}"; then
-		if grep -q -- '--oscam-revision' "${repodir}/config.sh"; then
-			./config.sh --oscam-revision
-		else
-			./config.sh --oscam-version | cut -d '-' -f 2-
-		fi
+	if [ -d "${repodir}" ]; then
+		(
+			cd "${repodir}"
+			if grep -q -- '--oscam-revision' "${repodir}/config.sh"; then
+				./config.sh --oscam-revision
+			else
+				./config.sh --oscam-version | cut -d '-' -f 2-
+			fi
+		)
 	fi
 };
 
 repo_get_commit(){
-	if [ -d "${repodir}" ] && cd "${repodir}"; then
-		$(USEGIT) && git log 2>/dev/null | sed -n 1p | cut -d ' ' -f2 | cut -c1-8 || printf ''
+	if [ -d "${repodir}" ]; then
+		(cd "${repodir}" && $(USEGIT) && git rev-parse --short HEAD 2>/dev/null) || printf ''
 	fi
 };
 
 BRANCH(){
-	if [ -d "${repodir}" ] && cd "${repodir}"; then
-		if $(USEGIT); then
-			ref="$(git name-rev --name-only "$(COMMIT)" 2>/dev/null | awk -F'/' '{ print $NF }' | awk -F'~' '{ print $1 }' | awk -F'^' '{ print $1 }')"
-			if [ "$ref" == "$(REVISION)" ]; then
-				branch=$(git branch | tail -n1 | tr -d ' *')
-				[ "$branch" == "(nobranch)" ] && printf 'master' || printf "$branch"
+	if [ -d "${repodir}" ]; then
+		(cd "${repodir}" && {
+			if $(USEGIT); then
+				ref="$(git name-rev --name-only "$(COMMIT)" 2>/dev/null | awk -F'/' '{ print $NF }' | awk -F'~' '{ print $1 }' | awk -F'^' '{ print $1 }')"
+				if [ "$ref" == "$(REVISION)" ]; then
+					branch=$(git branch | tail -n1 | tr -d ' *')
+					[ "$branch" == "(nobranch)" ] && printf 'master' || printf "$branch"
+				else
+					printf "$ref"
+				fi
 			else
-				printf "$ref"
+				printf "$trunkurl" | awk -F'/' '{ print $NF }'
 			fi
-		else
-			printf "$trunkurl" | awk -F'/' '{ print $NF }'
-		fi
+		})
 	fi
 };
 
@@ -289,4 +306,12 @@ REPOIDENT(){
 	else
 		printf ""
 	fi
+}
+
+REVISION() {
+    repo_get_revision
+}
+
+COMMIT() {
+    repo_get_commit
 }

@@ -42,12 +42,18 @@ _update_me_logic() {
 }
 
 sys_update_self(){
-	push_error_context "Update s3 operation"
+	err_push_context "Update s3 operation"
 	clear;s3logo
 	printf "  s3_git CHECK:\n  -------------\n"
 	local_revision=0
 	online_revision=0
-	validate_command "Checking repository URL" check_url "$URL_S3_REPO"
+    # Use the new, robust network check function
+	if ! validate_command "Checking repository URL" net_check_url "$URL_S3_REPO"; then
+        log_warn "Could not reach the S3 repository. Skipping update check."
+        err_pop_context
+        sleep 2
+        return 1
+    fi
 
 	if [ ! -d $workdir/.git ]; then
 		s3local="$dldir/s3_github"
@@ -68,8 +74,11 @@ sys_update_self(){
 	else
 		logfile="$ldir/$(date +%F.%H%M%S)_update_me.log"
 		run_with_logging "$logfile" _update_me_logic
+		if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+			log_fatal "Update operation failed. See log for details: $logfile" "$EXIT_ERROR"
+		fi
 	fi
-	pop_error_context
+	err_pop_context
 	sleep 2
 }
 

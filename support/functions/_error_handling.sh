@@ -45,14 +45,12 @@ err_set_exit_code() {
     ERR_LAST_COMMAND="${2:-$BASH_COMMAND}"
 }
 
-err_log_and_exit() {
-    # Log error and exit with appropriate code
-    local message="${1:-Unknown error}"
+log_fatal() {
+    # Log a fatal error and exit
+    local message="$1"
     local exit_code="${2:-$EXIT_ERROR}"
 
-    log_error "$message (Exit code: $exit_code, Operation: $ERR_CURRENT_OPERATION)"
-    log_debug "Last command: $ERR_LAST_COMMAND"
-
+    log_error "FATAL: $message"
     err_cleanup
     exit "$exit_code"
 }
@@ -167,19 +165,19 @@ _cleanup_temp_files() {
 # UNIFIED ERROR HANDLING FUNCTIONS
 # ------------------------------------------------------------------------------
 
-push_error_context() {
+err_push_context() {
     # Push a new error context onto the stack
     ERROR_CONTEXT_STACK+=("$1")
 }
 
-pop_error_context() {
+err_pop_context() {
     # Pop the last error context from the stack
     if [ ${#ERROR_CONTEXT_STACK[@]} -gt 0 ]; then
         unset ERROR_CONTEXT_STACK[-1]
     fi
 }
 
-log_fatal() {
+err_log_and_exit() {
     # Log a fatal error and exit
     local message="$1"
     local exit_code="${2:-$EXIT_ERROR}"
@@ -188,6 +186,7 @@ log_fatal() {
     err_cleanup
     exit "$exit_code"
 }
+
 
 validate_command() {
     # Validate command execution and log errors
@@ -201,7 +200,7 @@ validate_command() {
     return 0
 }
 
-setup_error_handling() {
+err_setup() {
     # Initialize the error handling system
     ERROR_CONTEXT_STACK=()
 
@@ -226,11 +225,11 @@ err_setup_traps() {
 # LOGGING FUNCTIONS
 # ------------------------------------------------------------------------------
 # Define log levels
-readonly LOG_LEVEL_FATAL=0
-readonly LOG_LEVEL_ERROR=1
-readonly LOG_LEVEL_WARN=2
-readonly LOG_LEVEL_INFO=3
-readonly LOG_LEVEL_DEBUG=4
+LOG_LEVEL_FATAL=0
+LOG_LEVEL_ERROR=1
+LOG_LEVEL_WARN=2
+LOG_LEVEL_INFO=3
+LOG_LEVEL_DEBUG=4
 
 log_error() {
     local message="$@"
@@ -255,8 +254,12 @@ log_info() {
 }
 
 log_header() {
-    local message="$@"
-    printf "$b_l\n=== $message ===$w_l\n"
+    local message="$1"
+    local mode="${2:-verbose}"
+    # Respect quiet/silent mode to avoid interfering with command capture
+    if [ "$mode" != "silent" ] && [ "${S3_OUTPUT_MODE:-}" != "silent" ]; then
+        printf "%s" "$b_l\n=== $message ===$w_l\n" >&2
+    fi
 }
 
 log_debug() {

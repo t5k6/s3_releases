@@ -58,7 +58,7 @@ done
 array_names_a=( SHORT_PROTOCOLS SHORT_READERS SHORT_CARD_READERS AVAI_TCLIST
 		MISS_TCLIST SHORT_ADDONS DISABLED_MODULES SHORT_MODULENAMES
 		ALL_MODULES_LONG  ENABLED_MODULES INST_TCLIST SSH_CONF_CONTENT )
-array_names_A=( INTERNAL_MODULES USE_vars USE_vars_disable s3cfg_vars )
+array_names_A=( INTERNAL_MODULES USE_vars USE_vars_disable S3_CONFIGS )
 
 for a_n in "${array_names_a[@]}"
 do
@@ -87,20 +87,19 @@ USE_vars[STATIC_PCSC]=;
 USE_vars[STATIC_LIBDVBCSA]=;
 USE_vars[USE_OSCAMNAME]=;
 
-s3cfg_vars[USE_TARGZ]=0
-s3cfg_vars[DIRECTMENU]=0
-s3cfg_vars[NO_REPO_AUTOUPDATE]=0
-# Read S3_LOG_LEVEL with default of 2 if not set
-S3_LOG_LEVEL="${s3cfg_vars[S3_LOG_LEVEL]:-2}"
-s3cfg_vars[S3_LOG_LEVEL]=$S3_LOG_LEVEL
-s3cfg_vars[S3_UPDATE_CHECK]=1
-s3cfg_vars[S3_URL_CHECK]=1
-s3cfg_vars[INSTALL_NATIVE_LIBDVBCSA]=1
-s3cfg_vars[PATCH_WEBIF]=1
-s3cfg_vars[SAVE_LISTSMARGO]=1
-s3cfg_vars[ADD_PROFILE_NAME]=0
-s3cfg_vars[NO_REPO_AUTOUPDATE]=0
-s3cfg_vars[delete_oscamdebugbinary]=1
+source "$fdir/_error_handling.sh"
+source "$fdir/_config_management.sh"
+
+cfg_set_value "s3" "USE_TARGZ" "0"
+cfg_set_value "s3" "DIRECTMENU" "0"
+cfg_set_value "s3" "NO_REPO_AUTOUPDATE" "0"
+cfg_set_value "s3" "S3_UPDATE_CHECK" "1"
+cfg_set_value "s3" "S3_URL_CHECK" "1"
+cfg_set_value "s3" "INSTALL_NATIVE_LIBDVBCSA" "1"
+cfg_set_value "s3" "PATCH_WEBIF" "1"
+cfg_set_value "s3" "SAVE_LISTSMARGO" "1"
+cfg_set_value "s3" "ADD_PROFILE_NAME" "0"
+cfg_set_value "s3" "delete_oscamdebugbinary" "1"
 
 #filled arrays
 config_cases=( all addons protocols readers card_readers );
@@ -160,9 +159,12 @@ then
 	x=(*)
 	for i in "${x[@]}"
 	do
-		source "$i"
-		plugin=$(awk '/^#simplebuild_plugin/ {printf $2}' $i)
-		[ -z "$plugin" ] || s3opts+=($plugin)
+		# Skip config_management.sh as it's already sourced above, and only source .sh files
+		if [ "$i" != "_config_management.sh" ] && [[ "$i" == *.sh ]]; then
+			source "$i"
+			plugin=$(awk '/^#simplebuild_plugin/ {printf $2}' $i)
+			[ -z "$plugin" ] || s3opts+=($plugin)
+		fi
 	done
 else
 	echo "fail functions"
@@ -181,7 +183,7 @@ then
 	x=(*)
 	for i in "${x[@]}"
 	do
-		if [ -f "$i" ]; then
+		if [ -f "$i" ] && [[ "$i" == *.sh ]]; then
 			source "$i"
 			plugin=$(awk '/^#simplebuild_plugin/ {printf $2}' $i)
 			[ -z "$plugin" ] || s3opts+=($plugin)
@@ -192,11 +194,27 @@ fi
 #initialize simplebuild
 initializeANSI	# load colors
 auto_langset	# echo "info $txt_load_ok";
-read_s3cfg		# read simplebuild config
+# read simplebuild config
+cfg_load_file "s3" "$s3cfg"
+S3_LOG_LEVEL=$(cfg_get_value "s3" "S3_LOG_LEVEL" "2")
+
+# --- START: GLOBAL ERROR & WARNING CAPTURE ---
+# Create a unique log file for this specific run.
+MAIN_LOG_FILE="$ldir/s3_run_$(date +%F_%H-%M-%S)_$$.log"
+
+# Redirect stdout and stderr to tee. This sends all output to both the
+# console and the main log file for the entire script's duration.
+# Stderr is merged into stdout for logging but redirected back to stderr
+# for console display, preserving color codes and error stream distinction.
+exec > >(tee -a "$MAIN_LOG_FILE") 2> >(tee -a "$MAIN_LOG_FILE" >&2)
+log_info "Global logging initiated. Full output is being captured in: $MAIN_LOG_FILE"
+# --- END: GLOBAL ERROR & WARNING CAPTURE ---
 
 # check system #########################################################
-syscheck
-[ ! "$sanity" == "1" ] && echo "sanity fail" && sleep 5 && bye
+if ! sys_run_check; then
+	log_error "System prerequisite check failed. Please install missing packages and try again."
+	sleep 5 && bye
+fi
 ########################################################################
 
 _create_native_profile	# put native datas to toolchains and configs
@@ -208,7 +226,7 @@ _systype		# check used uname
 
 if [ -z "$1" ]
 then
-	[ "${s3cfg_vars[DIRECTMENU]}" == "1" ] && _dialog_checkout && exit
+	[ "$(cfg_get_value "s3" "DIRECTMENU")" == "1" ] && _dialog_checkout && exit
 	_help
 	exit
 
@@ -418,7 +436,7 @@ else
 				case $cmd in
 					OPENBOX)  OPENBOX=1;;
 					UFS916003) UFS916003=1;;
-					USE_VERBOSE) s3cfg_vars[USE_VERBOSE]=1;;
+					USE_VERBOSE) cfg_set_value "s3" "USE_VERBOSE" "1";;
 				esac
 
 			done

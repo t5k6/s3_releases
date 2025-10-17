@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Source dependencies
+source "$fdir/_error_handling.sh"
+
 #simplebuild_plugin tcupdate
 pversion="0.26.2";
 pname="s3.TUP";
@@ -13,6 +16,25 @@ ctngsrcdir="$ctdir/crosstool-ng";
 fngsrcdir="$ctdir/freetz-ng";
 andksrcdir="$ctdir/android-ndk";
 cpus="$(getconf _NPROCESSORS_ONLN)";
+
+
+# De-nested and moved from _get_toolchain_properties
+_get_toolchain_pkgconfig() {
+    local prefixdir="$1"
+
+    # Try to find pkgconfig directory in common locations
+    local pkgconfig_paths=("$prefixdir/lib/pkgconfig" "$prefixdir/usr/lib/pkgconfig" "$prefixdir/lib64/pkgconfig" "$prefixdir/usr/lib64/pkgconfig")
+
+    for pkgdir in "${pkgconfig_paths[@]}"; do
+        if [ -d "$pkgdir" ]; then
+            echo "$pkgdir"
+            return 0
+        fi
+    done
+
+    # Fallback to default
+    echo "$prefixdir/lib/pkgconfig"
+}
 
 tcupdate(){
 	[ -f "$workdir/DEVELOPMENT" ] && disable_syscheck="1" && disable_template_versioning="1" && source "$workdir/DEVELOPMENT" ; # DEVELOPMENT should contain a CURL_GITHUB_TOKEN to avoid github rate limiting
@@ -306,7 +328,7 @@ _integrate_libs(){
 							task=$(_replace_tokens "$task");	#replace tokens
 							buildtasks+=("$task");
 						done;
-					build_library_plugin "($i/$icount) $tc: ${txt_lib} ${lib[1]} ${lib[2]}" "$(_extract "$(_dl "${lib[6]}" "${lib[1]} ${lib[2]}")" "$tmpdir" 2>/dev/null)" "$logfile" "${buildtasks[@]}";
+					_build_library_plugin "($i/$icount) $tc: ${txt_lib} ${lib[1]} ${lib[2]}" "$(_extract "$(_dl "${lib[6]}" "${lib[1]} ${lib[2]}")" "$tmpdir" 2>/dev/null)" "$logfile" "${buildtasks[@]}";
 						err=$(( $err + $?));
 					done;
 					[ "${#buildtasks[@]}" == "0" ] && echo -e "${r_l}  ${txt_error}:${y_l} ${o} ${w_l}${txt_s3tup_msg_library_not_found}${rs_}";
@@ -386,7 +408,7 @@ _create_tc(){
 		case $ret in
 			0) #Download
 				for first in $opts;do
-					_toolchain_gui_install "force download"
+					ui_install_toolchain_interactive
 				done;;
 			1) #Setup - Setup crosstool-NG
 				_ctng_setup "$CT_START_BUILD";
@@ -696,10 +718,6 @@ _build_library_plugin(){
 	return $error_on_build;
 };
 
-# Generalized function to build OpenSSL
-build_openssl_plugin() {
-	build_openssl "$1" "$2" "$3" "$4" "$5" "$6"
-}
 _tpl_editor(){
 	tc="$2";tpl="$tc";unset TASKS;unset configtasks;local i=0;
 
@@ -751,6 +769,7 @@ _ctng_setup(){
 	_sz; # Prepare DIALOG settings
 	logfile="$ldir/$(date +%F.%H%M%S)_tup_ctng_setup.log";
 	unset setuptasks;
+	local setup_status=0;
 	(
 	bcl=$(printf '%s\n' "${CTNG_SETUP_tasks[@]}");
 	sp=$(printf '%*s' 80 | tr ' ' '=')
@@ -770,16 +789,19 @@ _ctng_setup(){
 			setuptasks+=("$task");
 		done
 		( eval "${setuptasks[@]}" ) 2>&1;
+		setup_status="${PIPESTATUS[0]}";
 	else
 		echo -e "$CTNG_ROOT_BUILD_ERROR$CTNG_ROOT_BUILD_CMD";
 		sleep 5;
 	fi;
 	) | _log "$logfile" | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_ctng_setup_title} crosstool-NG ]- " "$pb_" "$_lines" "$_cols";
+	return $setup_status;
 };
 _fng_setup(){
 	_sz; # Prepare DIALOG settings
 	logfile="$ldir/$(date +%F.%H%M%S)_tup_fng_setup.log";
 	unset setuptasks;
+	local setup_status=0;
 	(
 	bcl=$(printf '%s\n' "${FNG_SETUP_tasks[@]}");
 	sp=$(printf '%*s' 80 | tr ' ' '=')
@@ -800,16 +822,19 @@ _fng_setup(){
 			setuptasks+=("$task");
 		done
 		( eval "${setuptasks[@]}" ) 2>&1;
+		setup_status="${PIPESTATUS[0]}";
 	else
 		echo -e "$CTNG_ROOT_BUILD_ERROR$CTNG_ROOT_BUILD_CMD";
 		sleep 5;
 	fi;
 	) | _log "$logfile" | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_fng_setup_title} Freetz-NG ]- " "$pb_" "$_lines" "$_cols";
+	return $setup_status;
 };
 _andk_setup(){
 	_sz; # Prepare DIALOG settings
 	logfile="$ldir/$(date +%F.%H%M%S)_tup_andk_setup.log";
 	unset setuptasks;
+	local setup_status=0;
 	(
 	bcl=$(printf '%s\n' "${ANDK_SETUP_tasks[@]}");
 	sp=$(printf '%*s' 80 | tr ' ' '=')
@@ -828,11 +853,13 @@ _andk_setup(){
 			setuptasks+=("$task");
 		done
 		( eval "${setuptasks[@]}" ) 2>&1;
+		setup_status="${PIPESTATUS[0]}";
 	else
 		echo -e "$CTNG_ROOT_BUILD_ERROR$CTNG_ROOT_BUILD_CMD";
 		sleep 5;
 	fi;
 	) | _log "$logfile" | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_andk_setup_title} Android-NDK ]- " "$pb_" "$_lines" "$_cols";
+	return $setup_status;
 };
 _dl(){
 	[ -d "$dldir/#tmp" ] && rm -rf "$dldir/#tmp"
@@ -959,9 +986,9 @@ _get_toolchain_properties(){
 	else
 		cd "$tcdir/$tc/$_sysroot"
 	fi;
-	prefixdir="$PWD"
+prefixdir="$PWD"
 
-	pkgconfigdir="$(_get_toolchain_pkgconfig "$prefixdir")";
+pkgconfigdir="$(_get_toolchain_pkgconfig "$prefixdir")";
 
 	#get specific properties from .config
 	if [ -f "$tcdir/$tc/.config" ];then
@@ -997,8 +1024,7 @@ _get_toolchain_properties(){
 	opt="--enable-${slice}";
 
 	props="$compilername;$ranlibname;$includedir;$sysrootdir;$prefixdir;$pkgconfigdir;$hostname;$tc_type;$arch;$bitness;$api;$ssl_target;$cflags;$ldflags;$slice;$size;$opt"
-	echo "$props" | xargs;
-	[ -n "$props" ] && exit 0 || log_fatal "Failed to get properties" "$EXIT_ERROR"
+	echo "$props" | xargs
 };
 
 _get_toolchain_libs(){
@@ -1037,8 +1063,7 @@ _get_toolchain_libs(){
 		fi;
 	done;
 
-	echo "${libs%?}" | xargs;
-	[ -n "$libs" ] && exit 0 || log_fatal "Failed to get toolchain libs" "$EXIT_ERROR"
+	echo "${libs%?}" | xargs
 };
 _list_toolchain_libkeys(){
 	local tc tcs props compilername pkgconfigdir version key compare libkey libkeys fmt CUR G P R updatable downgradable ADD=11;
@@ -1209,7 +1234,6 @@ _get_template_properties(){
 		[ -z $setup ] && desc="$desc ($arch$cpu$aarch $bitness-bit $endianness, $libc $libcmv$libcv, $cc $ccv, $kernel $kernelv)$props";
 	fi;
 	echo "$desc";
-	[ -n "$desc" ] && exit 0 || log_fatal "Failed to get template properties" "$EXIT_ERROR"
 };
 _get_template_type(){
 	if [ -f "$1" ];then
@@ -1285,8 +1309,8 @@ _check_lib(){
 _check_pkg(){
 	pkgs=( gperf bison flex makeinfo help2man file cmp python3-config libtoolize gawk \
 		   wget bzip2 unzip rsync composite inkscape pkg-config python3 gettext ruby );
-	headers=( ncurses libacl.h sys/capability.h readline.h glib-2.0/glib.h );
-	libs=( libstdc++.so.6 libstdc++.a libc\\.a );
+	headers=( ncurses.h libacl.h sys/capability.h readline.h glib-2.0/glib.h );
+	libs=( libstdc++.so.6 libstdc++.a libc.a );
 	echo -e "${y_l}SYSCHECK -> ${txt_s3tup_msg_syscheck1}${re_}";
 	if syscheck "" "" "${pkgs[*]}" "${headers[*]}" "${libs[*]}";then
 		echo -e "${r_l}\nSYSCHECK -> ${txt_s3tup_msg_syscheck2}\n${y_l}${prefix} apt install ${packages}\n${re_}" && _paktc_timer 10;
@@ -1321,12 +1345,16 @@ _check_github_api_limits(){
 };
 _check_crosstool_setup(){
 	#Setup crosstool-NG automatically if not installed
+	local setup_failed=0;
 	if [ "$1" == "CTNG" ] || [ -z "$1" ];then
 		if [ ! -f "$ctngsrcdir/ct-ng" ];then
 			clear;
 			echo -e "${r_l}\nCHECK -> crosstool-NG ${txt_s3tup_msg_check_crosstool_setup_info}\n${re_}";
 			[ -z "$1" ] && _paktc_timer 5;
 			_ctng_setup "$CT_START_BUILD";
+			if [ $? -ne 0 ]; then
+				log_fatal "crosstool-NG setup failed";
+			fi;
 		fi;
 	fi;
 
@@ -1337,6 +1365,9 @@ _check_crosstool_setup(){
 			echo -e "${r_l}\nCHECK -> Freetz-NG ${txt_s3tup_msg_check_crosstool_setup_info}\n${re_}";
 			[ -z "$1" ] && _paktc_timer 5;
 			_fng_setup "$CT_START_BUILD";
+			if [ $? -ne 0 ]; then
+				log_fatal "Freetz-NG setup failed";
+			fi;
 		fi;
 	fi;
 
@@ -1347,6 +1378,9 @@ _check_crosstool_setup(){
 			echo -e "${r_l}\nCHECK -> Android Native Development Kit ${txt_s3tup_msg_check_crosstool_setup_info}\n${re_}";
 			[ -z "$1" ] && _paktc_timer 5;
 			_andk_setup "$CT_START_BUILD";
+			if [ $? -ne 0 ]; then
+				log_fatal "Android-NDK setup failed";
+			fi;
 		fi;
 	fi;
 };

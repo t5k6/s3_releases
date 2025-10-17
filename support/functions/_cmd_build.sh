@@ -3,15 +3,18 @@
 _cmd_build(){
 	[ ! -d "${repodir}" ] || [ -f "$workdir/NEED-CHECKOUT" ] && checkout
 
+    local timestamp
+    timestamp=$(date +%F.%H-%M-%S) # Format: YYYY-MM-DD.HH-MM-SS
+
 	if [ "$_toolchainname" == "native" ]
 	then
-		log_name="$(date +%F).$(date +%X).$(hostname).log"
+		log_name="${timestamp}.$(hostname).log"
 
 	else
-		log_name="$(date +%F).$(date +%X).$_toolchainname.log"
+		log_name="${timestamp}.$_toolchainname.log"
 	fi
 
-	source "$tccfgdir/$_toolchainname"
+	cfg_load_toolchain_config "$_toolchainname"
 	_reset_config
 	printf $WH
 	ologo >"$ldir/$log_name"
@@ -92,7 +95,7 @@ _cmd_build(){
 	fi
 
 #fix streamrelay case
-	check_streamrelay
+	build_check_streamrelay_deps
 
 #fill use variables and set name addons
 	USESTRING=;
@@ -201,12 +204,12 @@ printf "$y_l\n |       set : ${cdtag}$w_l"
 #max cpu usage
 	if [ -f "$configdir/max_cpus" ]
 	then
-		cpus="$(< "$configdir/max_cpus")"
+		cpus="$(cat "$configdir/max_cpus")"
 		[ ! "$cpus" -gt "1" ] && cpus="1"
-		[ "$cpus" -gt "$(CPUS)" ] && cpus="$(CPUS)"
-		printf "$y_l\n |  MAX_CPUS : $txt_use $cpus $txt_of $(CPUS) CPU(s)"
+		[ "$cpus" -gt "$(sys_get_cpu_count)" ] && cpus="$(sys_get_cpu_count)"
+		printf "$y_l\n |  MAX_CPUS : $txt_use $cpus $txt_of $(sys_get_cpu_count) CPU(s)"
 	else
-		cpus="$(CPUS)"
+		cpus="$(sys_get_cpu_count)"
 	fi
 
 	[ "${s3cfg_vars[USE_VERBOSE]}" == "1" ] && _verbose="V=1"
@@ -232,21 +235,23 @@ fi
 	EXTRA_USE=$extra_use
 	timer_start
 	_cmd_build_pipeline() {
-		$codecheck $_make -j"$cpus" $_verbose \
-		"CONF_DIR=$CONFDIR" \
-		"OSCAM_BIN=$bdir/$oscam_name" \
-		"CC_OPTS=$co $cc_opts $extra_cc" \
-		"CC_WARN=$cc_warn" \
-		"EXTRA_LDFLAGS=$extra_ld" \
-		"EXTRA_CFLAGS=$extra_c" \
-		$EXTRA_USE \
-		$COMP_LEVEL \
-		"CROSS=$CROSS" $STAPI_LIB $USESTRING $LIBCRYPTO_LIB $SSL_LIB $LIBUSB_LIB $PCSC_LIB $LIBDVBCSA_LIB
-	} 2>&1 | tee >(sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >> "$ldir/$log_name") \
-	|grep --line-buffered -v 'BFD\|^/' \
-	|grep --line-buffered '^CC\|^HOSTCC\|^GEN\|^CONF\|^RM\|^UPX\|^SIGN\|UseFlags\|  CONF_DIR =\|Binary\|LINK\|STRIP\|BUILD\|Addons\|Protocols\|Readers\|CardRdrs\|^/' \
-	|sed -e "s/^|/"$Y" |/g;s/^RM/"$R" REMOVE ----->$W/g;s/^CONF/"$C" CONFIG ----->$W/g;s/^LINK/"$P" LINK ------->$W/g;s/^STRIP/"$P" STRIP ------>$W/g;s/^CC\|^HOSTCC\|^BUILD/"$G" BUILD ------>$W/g;s/^GEN/"$C" GEN -------->/g;s/^UPX/"$GH" UPX -------->$W/g;s/^SIGN/"$YH" SIGN ------->$W/g;
+		{
+			$codecheck $_make -j"$cpus" $_verbose \
+			"CONF_DIR=$CONFDIR" \
+			"OSCAM_BIN=$bdir/$oscam_name" \
+			"CC_OPTS=$co $cc_opts $extra_cc" \
+			"CC_WARN=$cc_warn" \
+			"EXTRA_LDFLAGS=$extra_ld" \
+			"EXTRA_CFLAGS=$extra_c" \
+			$EXTRA_USE \
+			$COMP_LEVEL \
+			"CROSS=$CROSS" $STAPI_LIB $USESTRING $LIBCRYPTO_LIB $SSL_LIB $LIBUSB_LIB $PCSC_LIB $LIBDVBCSA_LIB
+		} 2>&1 | tee >(sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >> "$ldir/$log_name") \
+		|grep --line-buffered -v 'BFD\|^/' \
+		|grep --line-buffered '^CC\|^HOSTCC\|^GEN\|^CONF\|^RM\|^UPX\|^SIGN\|UseFlags\|  CONF_DIR =\|Binary\|LINK\|STRIP\|BUILD\|Addons\|Protocols\|Readers\|CardRdrs\|^/' \
+		|sed -e "s/^|/"$Y" |/g;s/^RM/"$R" REMOVE ----->$W/g;s/^CONF/"$C" CONFIG ----->$W/g;s/^LINK/"$P" LINK ------->$W/g;s/^STRIP/"$P" STRIP ------>$W/g;s/^CC\|^HOSTCC\|^BUILD/"$G" BUILD ------>$W/g;s/^GEN/"$C" GEN -------->/g;s/^UPX/"$GH" UPX -------->$W/g;s/^SIGN/"$YH" SIGN ------->$W/g;
 	s/WEBIF_//g;s/WITH_//g;s/MODULE_//g;s/CS_//g;s/HAVE_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g;s/= /: /g;"
+	}
 
 #calc buildtime
 	timer_stop

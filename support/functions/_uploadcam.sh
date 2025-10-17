@@ -1,20 +1,31 @@
 #!/bin/bash
 
 net_upload_cam_profile(){
-	push_error_context "Upload CAM operation"
+	err_push_context "Upload CAM operation"
 	clear
 	slogo
 	local profile_file="$1"
 
 	# Input validation
-	if [ ! -f "$profdir/$profile_file" ]; then
+	if [[ ! -f "$profdir/$profile_file" ]]; then
 		log_fatal "$profile_file $txt_upload_cam1" "$EXIT_MISSING"
 	else
 		log_info "CONFIG: $g_l$profile_file $txt_upload_cam2"
 	fi
 
 	# Load configuration
-	validate_command "Loading profile configuration" source "$profdir/$profile_file"
+	if ! cfg_load_file "profile" "$profdir/$profile_file"; then
+		log_fatal "Failed to load profile configuration: $profile_file" "$EXIT_INVALID_CONFIG"
+	fi
+
+	# Populate variables from loaded profile configuration
+	local loginname=$(cfg_get_value "profile" "loginname")
+	local ip=$(cfg_get_value "profile" "ip")
+	local port=$(cfg_get_value "profile" "port")
+	local stop_target=$(cfg_get_value "profile" "stop_target")
+	local replace_target=$(cfg_get_value "profile" "replace_target")
+	local targetcam=$(cfg_get_value "profile" "targetcam")
+	local remote_command=$(cfg_get_value "profile" "remote_command")
 
 	local build_binary
 	build_binary=$(find_latest_build_for_profile "$profile_file")
@@ -24,13 +35,19 @@ net_upload_cam_profile(){
 
 	local remote_user_host="${loginname}@${ip}"
 
-	# Output binary information
+	# Test connection first before proceeding
+	log_header "Testing connection to $remote_user_host"
+	if ! validate_command "Connection test" net_test_connection "$remote_user_host" "$port"; then
+		log_fatal "Could not connect to remote host. Check IP, port, and SSH key." "$EXIT_NETWORK"
+	fi
+
 	log_info "CAMNAME: $y_l$build_binary"
-	log_info "FILEDATE: $(stat -c %y "$bdir/$build_binary" | awk '{print $1" " substr($2,1,8)}')"
+	local file_size; file_size=$(stat -c%s "$bdir/$build_binary")
+	log_info "FILEDATE/SIZE: $(stat -c %y "$bdir/$build_binary" | awk '{print $1" " substr($2,1,8)}') / $(file_format_bytes "$file_size")"
 
 	# Upload the binary using abstracted network operations
 	log_header "Uploading $build_binary"
-	if ! validate_command "Uploading binary" net_scp_upload "$bdir/$build_binary" "$remote_user_host" "/tmp" "$port"; then
+	if ! validate_command "Uploading binary" net_scp_upload "$bdir/$build_binary" "$remote_user_host" "/tmp/" "$port"; then
 		log_fatal "Upload failed" "$EXIT_NETWORK"
 	fi
 	log_info "Upload complete."
@@ -78,6 +95,6 @@ EOF
 	fi
 
 	log_info "Upload process completed successfully."
-	pop_error_context
+	err_pop_context
 	return 0
 }

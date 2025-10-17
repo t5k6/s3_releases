@@ -1,12 +1,15 @@
 #!/bin/bash
 
-sys_check_binaries() {
+# Source ANSI color functions
+source "$fdir/_ansi.sh"
+
+    sys_check_binaries() {
     # Optimized binary checking with caching and reduced find operations
     err_init "Binary system check"
     local output_mode="${1:-verbose}"  # verbose/silent/summary
     local binary_cache="/tmp/s3_binary_cache_$BASHPID"
 
-    log_header "Checking for required binaries"
+    sys_check_output "$output_mode" "$w_l\n  CHECK for binaries\n  ==================$re_\n"
 
     # Setup caching to avoid repeated binary detection
     local cached_bins=""
@@ -19,7 +22,6 @@ sys_check_binaries() {
 
     for binary in "${binvars[@]}"; do
         local binary_path=""
-        local check_result=""
 
         # Check cache first
         if [ -n "$cached_bins" ]; then
@@ -29,16 +31,20 @@ sys_check_binaries() {
         # If not in cache or cache miss, check system
         if [ -z "$binary_path" ]; then
             if [ "$binary" = "autoconf-archive" ]; then
-                # Special case for autoconf-archive
-                if [ -f "/usr/share/aclocal/ax_absolute_header.m4" ]; then
-                    binary_path="/usr/share/aclocal/ax_absolute_header.m4"
-                fi
+                # Special case for autoconf-archive, which is a collection of m4 files, not an executable.
+                # We check for a known file's existence in common locations instead of an executable path.
+                for aclocal_dir in /usr/share/aclocal /usr/local/share/aclocal; do
+                    if [ -f "$aclocal_dir/ax_absolute_header.m4" ]; then
+                        binary_path="$aclocal_dir/ax_absolute_header.m4"
+                        break
+                    fi
+                done
             else
                 binary_path=$(type -pf "$binary" 2>/dev/null || which "$binary" 2>/dev/null || echo "")
             fi
         fi
 
-        if [ -n "$binary_path" ] && [ -x "$binary_path" ]; then
+        if [ -n "$binary_path" ] && { [ "$binary" = "autoconf-archive" ] || [ -x "$binary_path" ]; }; then
             printf -v pad %40s
             binary_display="${binary}${pad}"
             binary_display="${binary_display:0:16}"
@@ -53,22 +59,6 @@ sys_check_binaries() {
         fi
     done
 
-    # Specialized checks (keep these optimized)
-    if command -v upx >/dev/null 2>&1; then
-        local upx_version upx_ok
-        mapfile -t upx_info < <(upx -V | awk 'NR==1{version=$2; ok=($2>=3.91)?1:0; printf "%.2f|%i", version, ok}')
-        upx_version="${upx_info[0]%%|*}"
-        upx_ok="${upx_info[0]##*|}"
-
-        sys_check_output "$output_mode" "$w_l  have$g_l  upx$y_l\t\t$w_l Version: $P ${upx_version}"
-
-        if [ "${upx_ok:-0}" -eq 1 ]; then
-            sys_check_output "$output_mode" "$g_l ok$re_\n"
-        else
-            sys_check_output "$output_mode" "$r_l nok$re_\n"
-            failed_bins+=("upx(version_too_low)")
-        fi
-    fi
 
     # Cache successful finds
     printf "%s\n" "${found_bins[@]}" > "$binary_cache"
@@ -98,7 +88,7 @@ sys_check_headers() {
     local failed_headers=()
     local found_headers=()
 
-    for header in "${headervars[@]}"; do
+	for header in "${headervars[@]}"; do
         local header_found="false"
         local header_path=""
 
@@ -117,12 +107,10 @@ sys_check_headers() {
                 break
             fi
             # Also check subdirectories for complex headers
-            if [ "$header_found" = "false" ]; then
-                header_path=$(find "$include_path" -name "$header" -type f 2>/dev/null | head -1)
-                if [ -n "$header_path" ]; then
-                    header_found="true"
-                    break
-                fi
+            header_path=$(find "$include_path" -name "$header" -type f 2>/dev/null | head -1)
+            if [ -n "$header_path" ]; then
+                header_found="true"
+                break
             fi
         done
 
@@ -160,25 +148,13 @@ sys_check_libraries() {
 
     sys_check_output "$output_mode" "$w_l\n  CHECK for libraries\n  ===================$re_\n"
 
-    # Define library search patterns intelligently
-    local lib_extensions=("so" "so.*" "a")
-    local lib_paths=()
-    for lib_var in "${libvars[@]}"; do
-        for ext in "${lib_extensions[@]}"; do
-            lib_paths+=("$lib_var.$ext")
-        done
-    done
+	local failed_libs=()
+	local found_libs=()
 
-    local failed_libs=()
-    local found_libs=()
-
-    for lib in "${lib_paths[@]}"; do
-        local lib_found="false"
-        local lib_path=""
-
-        # Use find with more targeted search
-        lib_path=$(find /usr/lib* /usr/local/lib* -name "$lib" -type f 2>/dev/null | head -1)
-        [ -n "${SYSROOT:-}" ] && lib_path="${lib_path:-$(find "${SYSROOT}"/usr/lib* -name "$lib" -type f 2>/dev/null | head -1)}"
+	for lib in "${libvars[@]}"; do
+		# Use find with more targeted search
+		lib_path=$(find /usr/lib* /usr/local/lib* -name "$lib" -type f 2>/dev/null | head -1)
+		[ -n "${SYSROOT:-}" ] && lib_path="${lib_path:-$(find "${SYSROOT}"/usr/lib* -name "$lib" -type f 2>/dev/null | head -1)}"
 
         printf -v pad %40s
         lib_display="${lib}${pad}"
@@ -236,7 +212,7 @@ sys_check_output() {
 
     case "$mode" in
         "verbose")
-            printf "$message"
+            printf "%s" "$message" >&2
             ;;
         "silent")
             :  # No output
@@ -246,15 +222,14 @@ sys_check_output() {
             :  # For now, same as silent
             ;;
         *)
-            printf "$message"
+            printf "%s" "$message" >&2
             ;;
     esac
 }
 
 # Legacy function wrapper for backward compatibility
 prerequisites() {
-    local output_mode="verbose"
-    [[ $1 ]] && output_mode=": &&" || output_mode="verbose"  # Handle legacy call pattern
+local output_mode="${1:-verbose}"  # silent/verbose/summary
 
     local total_failures=0
 
@@ -290,7 +265,7 @@ syscheck(){
 now=$2
 if [ -d "$osdir" ]
 then
-	cd "$osdir"
+	cd "$osdir" || return 1
 	x=(*)
 	for i in "${x[@]}"
 	do
@@ -299,9 +274,9 @@ then
 fi
 
 unset binvars; unset headervars; unset libvars;
-[ -z ${3+x} ] && binvars=( dialog grep gawk wget tar bzip2 git bc xz upx patch gcc g++ make automake autoconf autoconf-archive libtool jq scp sshpass openssl dos2unix curl ) || binvars=( $(echo "$3" | tr ' ' '\n') )
-[ -z ${4+x} ] && headervars=( crypto.h libusb.h pcsclite.h pthread.h opensslconf.h dvbcsa.h ) || headervars=( $(echo "$4" | tr ' ' '\n') )
-[ -z ${5+x} ] && libvars=( libccidtwin.so ) || libvars=( $(echo "$5" | tr ' ' '\n') )
+mapfile -t binvars < <(echo "${3:-dialog grep gawk wget tar bzip2 git bc xz upx patch gcc g++ make automake autoconf autoconf-archive libtool jq scp sshpass openssl dos2unix curl}" | tr ' ' '\n')
+mapfile -t headervars < <(echo "${4:-crypto.h libusb.h pcsclite.h pthread.h opensslconf.h dvbcsa.h}" | tr ' ' '\n')
+mapfile -t libvars < <(echo "${5:-libccidtwin.so}" | tr ' ' '\n')
 sanity=1
 
 if ! prerequisites silent || [ "$now" == "now" ]
@@ -332,16 +307,16 @@ then
 
 	# Optional override via parameter
 	#[[ $override ]] && installer=$override;
-	printf "\n$w_l  Selected installer:    $P$installer\n"
+		printf '\n%s  Selected installer:    %s\n' "$w_l" "$P$installer"
 
 	if type -t "$installer" >/dev/null
 	then
 		$installer && prerequisites silent && sanity=1
 	else
-		printf "\n$r_l  Needs manual installation.\n"
+		printf '\n%s  Needs manual installation.\n' "$r_l"
 	fi
 
-	printf "$re_\n"
+	printf '%s\n' "$re_"
 fi
 
 return $sanity
@@ -365,7 +340,7 @@ upx_native_installer(){
 	[[ "$prefix" =~ ^su[[:space:]].* ]] && echo -en "$r_l\n  (upx installer) Enter $rootuser Password: ";
 	$prefix "
 			(cd /usr/local/bin;
-			 tar -xvf "/tmp/upx_$HOST_ARCH.tar.xz" $(tar -tf "/tmp/upx_$HOST_ARCH.tar.xz" | grep 'upx$') --strip-components=1);
+			 tar -xvf "/tmp/upx_$HOST_ARCH.tar.xz" \$(tar -tf "/tmp/upx_$HOST_ARCH.tar.xz" | grep 'upx$') --strip-components=1);
 	" |& _log "$install_log" &>/dev/null
 	[[ "$prefix" =~ ^su[[:space:]].* ]] && echo
 	rm -rf "/tmp/upx_$HOST_ARCH.tar.xz" 2>/dev/null
@@ -393,15 +368,19 @@ libdvbcsa_native_installer(){
 	rm -rf /tmp/libdvbcsa 2>/dev/null
 	echo -e "\ngit clone https://github.com/oe-mirrors/libdvbcsa.git /tmp/libdvbcsa" |& _log "$install_log" &>/dev/null
 	git clone https://github.com/oe-mirrors/libdvbcsa.git /tmp/libdvbcsa |& _log "$install_log" &>/dev/null
-	cd /tmp/libdvbcsa
+	cd /tmp/libdvbcsa || return 1
 
 	echo -e "$w_l  Building ${g_l}libdvbcsa$w_l..." | _log "$install_log"
 	echo -e "\n./bootstrap && ./configure $optimization" |& _log "$install_log" &>/dev/null
-	(./bootstrap && ./configure $optimization) |& _log "$install_log" &>/dev/null
-	(($?)) && return 1;
+	(./bootstrap && ./configure "$optimization") |& _log "$install_log" &>/dev/null
+	if ! (./bootstrap && ./configure "$optimization") |& _log "$install_log" &>/dev/null; then
+		return 1
+	fi
 
 	echo -e "\nmake -j$(sys_get_cpu_count)" |& _log "$install_log" &>/dev/null
-	make -j$(sys_get_cpu_count) |& _log "$install_log" &>/dev/null || return 1;
+	if ! make "-j$(sys_get_cpu_count)" |& _log "$install_log" &>/dev/null; then
+		return 1
+	fi
 
 	echo -e "$w_l  Installing ${g_l}libdvbcsa$w_l...$re_" | _log "$install_log"
 	echo -e "\n$prefix make install" |& _log "$install_log" &>/dev/null
@@ -417,4 +396,9 @@ libdvbcsa_native_installer(){
 
 sys_get_cpu_count(){
 	nproc
+}
+
+# System prerequisite check function for main script (legacy name, to be renamed via migration)
+sys_run_check() {
+    prerequisites silent
 }

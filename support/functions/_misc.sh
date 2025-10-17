@@ -18,9 +18,14 @@ _set_dialog_types(){
 	pb_="--progressbox"
 	title_="SIMPLEBUILD3 $(version | tr '\n' ' ')"
 }
+
+cfg_edit_s3() {
+    ui_edit_s3_config
+    bye
+}
+
 cedit(){
-	s3cfg_menu
-	bye
+	cfg_edit_s3
 }
 counter(){
 	COUNT="$((COUNT+1))"
@@ -34,8 +39,9 @@ timer_stop(){
 timer_start(){
 	Ts="$(date +%s)"
 }
-decode(){
-	eval printf $(printf "$1" | base64 -d)
+decode() {
+    # Decodes a base64 string. Returns non-zero if input is empty or invalid.
+    [[ -n "$1" ]] && printf "%s" "$1" | base64 -d 2>/dev/null
 }
 get_module_name(){
 	printf "${INTERNAL_MODULES[$1]}"
@@ -191,7 +197,7 @@ _pre_build(){
 	_oscamconfdir_default=""
 	_oscamconfdir_custom=""
 	_extract_strip="0"
-	source "$tccfgdir/$1"
+	cfg_load_file "toolchain" "$tccfgdir/$1" "true"
 	clear
 	_nl
 	printf $WH
@@ -247,47 +253,88 @@ _init_menu(){
 	MENU_OPTIONS_STD=""
 	counter
 }
-_select_menu(){
-	revision_="$($(USEGIT) && printf "$(COMMIT)" || printf "r$(REVISION)")"
-	_menutext="Simplebuild3 $(version | head -n1 | awk '{print $1}')\n $(REVISION)$($(USEGIT) && printf " @ $(COMMIT) @ $(BRANCH)" || printf " on $(BRANCH)")"
-	smenu=$(
-	"$gui" "$st_" "$bt_" "$title_" "$nc_" --title "-[ $txt_start_menu$(REPOIDENT) ]-" --menu "\n $_menutext" 15 55 7 "Continue" "$txt_firstmenu_continue $revision_" "CHANGE" "$txt_firstmenu_chose" "CEDIT" "$txt_firstmenu_cedit" "TCUPDATE" "$txt_firstmenu_tcupdate" "LANG" "$txt_firstmenu_lang" "EXIT" "$txt_firstmenu_exit")
-	[ $? = 255 ] && _select_menu
 
-	case $smenu in
-		Continue)
-					if [ ! -f "${repodir}/config.sh" ]
-					then
-						ui_show_msgbox "$txt_no oscam-${REPO} $txt_found" ""
-						sleep 2
-						_select_menu
-					else
-						ui_show_toolchain_main_menu
-					fi;;
-		CHANGE)
-					if $(USEGIT)
-					then
-						_rev=$(ui_get_input "Commit: by sha, tag or branch name" "Commit: 0 = $txt_latest" "0")
-					else
-						new_rev=$(ui_get_input "Revision: 7000+" "Revision: 0 = $txt_latest" "0")
-						[[ $new_rev =~ ^-?[0-9]+$ ]] && [ ! "$new_rev" -le "7000" ] && _rev="$new_rev" || _rev=0
-					fi
-					[ ! -z "$_rev" ] && check_url "$trunkurl" && _dialog_checkout1 "$_rev"
-					_select_menu;;
-		CEDIT)
-					s3cfg_menu
-					_select_menu;;
-		TCUPDATE)
-					tcupdate "" "" "" "1"
-					_select_menu;;
-		LANG)
-					lang_select
-					cd "$workdir"
-					./s3 menu;;
-		EXIT)
-					bye;;
-	esac
-exit
+ui_show_main_menu() {
+    err_push_context "ui_show_main_menu"
+
+    while true; do
+        local revision_text="$($(USEGIT) && printf "$(COMMIT)" || printf "r$(REVISION)")"
+        local menu_text="Simplebuild3 $(version | head -n1 | awk '{print $1}')\n $(REVISION)$($(USEGIT) && printf " @ $(COMMIT) @ $(BRANCH)" || printf " on $(BRANCH)")"
+        local title="-[ $txt_start_menu$(REPOIDENT) ]-"
+
+        menu_init "$menu_text"
+        menu_add_option "Select_Toolchain" "$txt_firstmenu_continue $revision_text"
+        menu_add_option "Checkout_Version" "$txt_firstmenu_chose"
+        menu_add_option "Edit_Settings"    "$txt_firstmenu_cedit"
+        menu_add_option "TCUPDATE"         "$txt_firstmenu_tcupdate"
+        menu_add_option "LANG"             "$txt_firstmenu_lang"
+        menu_add_option "EXIT"             "$txt_firstmenu_exit"
+
+        if ! menu_show_list; then
+            # User pressed Cancel or ESC, exit the application.
+            bye
+        fi
+
+        local selection
+        selection="$(menu_get_first_selection)"
+
+        case "$selection" in
+            Select_Toolchain)
+                if [ ! -f "${repodir}/config.sh" ]; then
+                    ui_show_msgbox "$txt_no oscam-${REPO} $txt_found" ""
+                else
+                    ui_show_toolchain_main_menu
+                fi
+                ;;
+            Checkout_Version)
+                local _rev
+                if $(USEGIT); then
+                    _rev=$(ui_get_input "Commit: by sha, tag or branch name" "Commit: 0 = $txt_latest" "0")
+                else
+                    _rev=$(ui_get_input "Revision: 7000+" "Revision: 0 = $txt_latest" "0")
+                    # Basic validation remains, could be enhanced further.
+                    [[ $_rev =~ ^-?[0-9]+$ && "$_rev" -gt "7000" ]] || _rev=0
+                fi
+
+                if [ -n "$_rev" ]; then
+                    local requested_rev="$_rev"
+                    [[ "$requested_rev" == "0" || "$requested_rev" == "master" ]] && requested_rev="master"
+
+                    local current_commit; current_commit=$(COMMIT)
+                    local current_branch; current_branch=$(BRANCH)
+
+                    if [[ "$requested_rev" == "$current_commit" || "$requested_rev" == "$current_branch" ]]; then
+                        ui_show_msgbox "Repository" "You are already at the requested version: $requested_rev"
+                    # Use the new, robust network check function.
+                    elif net_check_url "$URL_OSCAM_REPO"; then
+                        _dialog_checkout1 "$_rev"
+                    fi
+                fi
+                ;;
+            Edit_Settings)
+                # Call the newly refactored config editor.
+                ui_edit_s3_config
+                ;;
+            TCUPDATE)
+                tcupdate "" "" "" "1"
+                ;;
+            LANG)
+                lang_select
+                cd "$workdir"
+                # Relaunch the script to apply language change.
+                exec ./s3 menu
+                ;;
+            EXIT)
+                bye
+                ;;
+        esac
+    done
+    err_pop_context
+}
+
+# The old function should be replaced or aliased to maintain compatibility during transition.
+_select_menu() {
+    ui_show_main_menu
 }
 _oscam_extra_menu(){
 	uv=
@@ -373,58 +420,7 @@ _build_extra_menu(){
 	save_config
 	_toolchain_config_menu
 }
-_pre_main_menu(){
-	IFS="#"
-	COUNT=0
-	MENU_OPTIONS="EXIT#$txt_menu_builder1#"
-	counter
-	MENU_OPTIONS=${MENU_OPTIONS}"ADD#$txt_menu_builder2#"
-	counter
 
-	if [ "$tcempty" == "0" ]
-	then
-		MENU_OPTIONS="${MENU_OPTIONS}REMOVE#$txt_menu_builder3#"
-		counter
-	fi
-
-	MENU_OPTIONS="${MENU_OPTIONS}NATIVE#$txt_menu_builder4$native#"
-	counter
-	_a=$(uname -m)
-
-	if [ "$systype" == "ok" ]
-	then
-		if [ "$tcempty" == "0" ]
-		then
-			for i in "${INST_TCLIST[@]}"
-			do
-				source "$tccfgdir/$i"
-				MENU_OPTIONS="${MENU_OPTIONS}$_toolchainname#$_description#"
-				counter
-			done
-		fi
-	fi
-
-	out=$("$gui" --help-button --help-label INFO --title "-[ Toolchain Menu $(version | head -n1 | awk '{print $1}')$(REPOIDENT) ]-" --menu "$txt_t_menu1$REVISION" "${COUNT+8}" 75 0 "${MENU_OPTIONS}")
-	IFS=$OIFS
-	first=$(echo "$out" | awk '{printf $1}')
-	tc_info=$(echo "$out" | awk '{printf $2}')
-
-	if [ "$first" == "HELP" ]
-	then
-		if [ -f "$tccfgdir/$(echo "$out" | awk '{printf $2}')" ]
-		then
-			source "$tccfgdir/$tc_info"
-			printf "\n\n\tinfobox $_tc_info"
-			sleep 4
-		fi
-	fi
-	if [ "$first" == "EXIT" ]
-	then
-		bye
-	else
-		toolchain_main_menu;
-	fi
-}
 tedit(){
 	clear
 	if [ -f "$tccfgdir/$1" ]
@@ -460,6 +456,9 @@ _gtedit(){
 
 		source "$tccfgdir/$_toolchainname"
 	fi
+}
+check_smargo(){
+	build_check_smargo_deps
 }
 build_check_smargo_deps(){
 	if [ -f "${repodir}/config.sh" ]
@@ -548,72 +547,63 @@ _get_config_menu(){
 	source "$tmp"
 	rm -rf "$tmp"
 }
-cfg_read_s3(){
-	if [ -f "$s3cfg" ]
-	then
-		while read l
-		do
-			s3cfg_vars[$(echo "$l"| awk -F'=' '{print $1}')]=$(echo "$l"| awk -F'=' '{print $2}')
-		done < "$s3cfg"
-	fi
-}
+ui_edit_s3_config() {
+    err_push_context "ui_edit_s3_config"
 
-read_s3cfg(){
-	cfg_read_s3
-}
-s3cfg_menu(){
-		unset CFG_MENU
-		declare -a CFG_MENU
-		old_IFS=$IFS
-		COUNT=0
-		found=""
+    # Part 1: Edit S3_LOG_LEVEL using a radiolist for single selection.
+    menu_init "Select Log Level"
+    local current_level
+    current_level=$(cfg_get_value "s3" "S3_LOG_LEVEL" "2")
 
-		# Special handling for S3_LOG_LEVEL - use menu system radiolist
-		menu_init "Select Log Level"
-		menu_add_option "0" "Fatal only" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "0" ] && echo "on" || echo "off" )"
-		menu_add_option "1" "Fatal + Error" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "1" ] && echo "on" || echo "off" )"
-		menu_add_option "2" "Fatal + Error + Warn (DEFAULT)" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "2" ] && echo "on" || echo "off" )"
-		menu_add_option "3" "Fatal + Error + Warn + Info" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "3" ] && echo "on" || echo "off" )"
-		menu_add_option "4" "Fatal + Error + Warn + Info + Debug" "$( [ "${s3cfg_vars[S3_LOG_LEVEL]}" == "4" ] && echo "on" || echo "off" )"
+    menu_add_option "0" "Fatal only"                            "$( [[ "$current_level" == "0" ]] && echo "on" || echo "off" )"
+    menu_add_option "1" "Fatal + Error"                         "$( [[ "$current_level" == "1" ]] && echo "on" || echo "off" )"
+    menu_add_option "2" "Fatal + Error + Warn (Default)"        "$( [[ "$current_level" == "2" ]] && echo "on" || echo "off" )"
+    menu_add_option "3" "Fatal + Error + Warn + Info"           "$( [[ "$current_level" == "3" ]] && echo "on" || echo "off" )"
+    menu_add_option "4" "Fatal + Error + Warn + Info + Debug"   "$( [[ "$current_level" == "4" ]] && echo "on" || echo "off" )"
 
-		if menu_show_radiolist; then
-			selected_level="$(menu_get_first_selection)"
-			s3cfg_vars[S3_LOG_LEVEL]=$selected_level
-		fi
+    if menu_show_radiolist; then
+        local selected_level
+        selected_level="$(menu_get_first_selection)"
+        cfg_set_value "s3" "S3_LOG_LEVEL" "$selected_level"
+    fi
 
-		# Build checklist for other options using menu system
-		menu_init "enable/disable options"
-		for e in "${!s3cfg_vars[@]}"
-		do
-			if [ "$e" != "S3_LOG_LEVEL" ]; then
-				menu_add_option "$e" "$e" "$([ "${s3cfg_vars[$e]}" -gt "0" ] && echo "on" || echo "off")"
-			fi
-		done
+    # Part 2: Edit boolean (0/1) settings using a checklist.
+    # Define a list of user-editable boolean settings for clarity and security.
+    local editable_options=(
+        "ADD_PROFILE_NAME"
+        "DELETE_OSCAMDEBUG"
+        "NO_REPO_AUTOUPDATE"
+        "PATCH_WEBIF"
+        "S3_URL_CHECK"
+        "SAVE_LISTSMARGO"
+        "USE_TARGZ"
+        "USE_VERBOSE"
+    )
 
-		IFS="#"
-		# Use menu system checklist instead of direct gui call
-		if menu_show_checkbox; then
-			selected_options=("$(menu_get_selected_options)")
-		fi
-		IFS=$old_IFS
+    menu_init "Enable/Disable SimpleBuild3 Options"
+    for option in "${editable_options[@]}"; do
+        local state="off"
+        [[ "$(cfg_get_value "s3" "$option" "0")" == "1" ]] && state="on"
+        menu_add_option "$option" "$option" "$state"
+    done
 
-	for e1 in "${!s3cfg_vars[@]}"
-	do
-		if [[ " ${selected_options[@]} " =~ " ${e1} " ]]; then
-			s3cfg_vars[$e1]=1
-		else
-			s3cfg_vars[$e1]=0
-		fi
-	done
+    if menu_show_checkbox; then
+        local selected_options
+        selected_options=($(menu_get_selected_options))
 
-	cfg_write_s3
-}
-cfg_write_s3(){
-	[ -f "$s3cfg" ] && rm -rf "$s3cfg"
-	for e in "${!s3cfg_vars[@]}"
-	do
-		echo "$e=${s3cfg_vars[${e}]}" >>"$s3cfg"
-	done
+        # Atomically update all options based on the user's selection.
+        for option in "${editable_options[@]}"; do
+            if [[ " ${selected_options[*]} " =~ " ${option} " ]]; then
+                cfg_set_value "s3" "$option" "1"
+            else
+                cfg_set_value "s3" "$option" "0"
+            fi
+        done
+    fi
+
+    # Part 3: Save all changes back to the configuration file.
+	validate_command "Saving SimpleBuild3 configuration" cfg_save_file "s3" "$s3cfg"
+    err_pop_context
 }
 _stapi_select(){
 	if [ "$stapi_allowed" == "1" ]
@@ -642,7 +632,7 @@ _stapi_select(){
 				addstapi="USE_STAPI5";;
 		esac;
 
-		save_config
+		cfg_save_build_profile
 	else
 		"$gui" "$st_" --title "STAPI INFO" --msgbox "NOT for $_toolchainname" 0 0
 		_toolchain_config_menu
@@ -765,19 +755,10 @@ _get_config_con(){
 		rm -rf "$tmp.load" "$tmp1.load"
 	fi
 }
-check_url(){
-	if [[ ! "$1" =~ "@" ]] && [ ${s3cfg_vars[S3_URL_CHECK]} -gt 0 ]
-	then
-		if ! http_code=$(curl --output /dev/null --write-out "%{http_code}" --silent --fail --connect-timeout ${s3cfg_vars[S3_URL_CHECK]} "$1")
-		then
-			if [ ! "$http_code" == "401" ]
-			then
-				printf "$r_l$1 is not reachable! (HTTP status: $http_code)$re_\n"
-				return 1
-			fi
-		fi
-	fi
-}
+
 version(){
 echo -e "${SIMPLEVERSION}.${VERSIONCOUNTER} by ${DEVELOPER}\n- in memory of gorgone -"
+}
+tcupdate(){
+	plugin_run_toolchain_updater "$1" "$2" "$3" "$4"
 }

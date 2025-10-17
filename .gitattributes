@@ -1,0 +1,28 @@
+# .gitattributes
+
+# Set the default behavior for all files to be determined by Git.
+# This handles files not explicitly matched below.
+* text=auto
+
+#
+# Enforce LF line endings for all shell scripts and text-based config files.
+# This is the most important section for SimpleBuild3.
+# It tells Git: "On checkout, make sure these files have LF endings."
+#
+*.sh          text eol=lf
+*.cfg         text eol=lf
+*.config      text eol=lf
+*.url         text eol=lf
+*.profile     text eol=lf
+*.ssh         text eol=lf
+*.md          text eol=lf
+Makefile      text eol=lf
+
+#
+# Explicitly tell Git which files are binary and should never be touched.
+#
+*.png         binary
+*.jpg         binary
+*.gz          binary
+*.tar         binary
+*.zip         binary
