@@ -24,13 +24,48 @@ _list_profiles() {
 }
 
 _save_profile() {
-	if [ -f "$menudir/$_toolchainname.save" ]; then
-		source "$menudir/$_toolchainname.save"
-		input=$(ui_get_input " -[ $1 Toolchain ]- " "SAVE PROFILE" "$_toolchainname")
-		if [ -n "$input" ]; then
-			echo $enabled $usevars | sed -e 's/CARDREADER_//g;s/READER_//g;s/MODULE_//g;s/HAVE_//g;s/WEBIF_//g;s/WITH_//g;s/CS_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g;' >"$profdir/$input.profile"
-		fi
+	err_push_context "_save_profile"
+
+	# Retrieve the current build configuration from the UCM cache.
+	# This cache should be populated by previous actions in the build menu.
+	local namespace="build_profile:$_toolchainname"
+	local enabled_modules use_vars
+	enabled_modules=$(cfg_get_value "$namespace" "enabled_modules")
+	use_vars=$(cfg_get_value "$namespace" "use_vars")
+
+	if [[ -z "$enabled_modules" && -z "$use_vars" ]]; then
+		ui_show_msgbox "Error" "No build configuration is currently loaded for '$_toolchainname'.\nPlease configure the build before saving a profile."
+		err_pop_context
+		return 1
 	fi
+
+	local profile_name
+	profile_name=$(ui_get_input "Save Build Profile" "Enter a name for this profile:" "$_toolchainname")
+
+	if [[ -z "$profile_name" ]]; then
+		log_info "Profile save cancelled by user."
+		err_pop_context
+		return 0
+	fi
+
+	# The .profile format is a space-separated list of short module names and USE_ vars.
+	# Convert the long module names from the config into their short forms.
+	local profile_content
+	profile_content=$(echo "$enabled_modules $use_vars" | sed -e 's/CARDREADER_//g;s/READER_//g;s/MODULE_//g;s/HAVE_//g;s/WEBIF_//g;s/WITH_//g;s/CS_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g;')
+
+	local profile_path="$profdir/$profile_name.profile"
+
+	# Use printf for robust file writing.
+	if ! printf "%s\n" "$profile_content" >"$profile_path"; then
+		log_error "Failed to write profile to '$profile_path'. Check permissions."
+		ui_show_msgbox "Error" "Failed to save profile file."
+		err_pop_context
+		return 1
+	fi
+
+	log_info "Profile saved successfully: $profile_path"
+	ui_show_msgbox "Success" "Profile '$profile_name.profile' has been saved."
+	err_pop_context
 }
 
 _load_profile() {

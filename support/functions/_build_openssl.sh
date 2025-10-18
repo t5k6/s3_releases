@@ -6,6 +6,22 @@
 # specific versions of OpenSSL for a given toolchain.
 # =============================================================================
 
+# Helper to determine OpenSSL config target
+_openssl_get_config_target() {
+	local cc="$1"
+	local arch
+	arch=$("$cc" -dumpmachine | awk -F'-' '{print $1}')
+	case "$arch" in
+	arm | armv7*) echo "linux-armv4" ;;
+	aarch64) echo "linux-aarch64" ;;
+	mips) echo "linux-mips32" ;;
+	powerpc*) echo "linux-ppc" ;;
+	sh4) echo "linux-sh" ;;
+	i?86 | x86_64) echo "linux-x86_64" ;;
+	*) echo "linux-generic32" ;;
+	esac
+}
+
 # Main entry point for building OpenSSL.
 # This function installs to a temporary directory and then copies the
 # necessary files to the final sysroot destination.
@@ -47,21 +63,8 @@ build_openssl() {
 
 	# Configure
 	log_header "Configuring OpenSSL $version (logging to file)"
-	local target_arch
-	target_arch=$("$cc" -dumpmachine | awk -F'-' '{print $1}')
 	local config_target
-	case "$target_arch" in
-	arm | armv7*) config_target="linux-armv4" ;;
-	aarch64) config_target="linux-aarch64" ;;
-	mips) config_target="linux-mips32" ;;
-	powerpc*) config_target="linux-ppc" ;;
-	sh4) config_target="linux-sh" ;;
-	i?86 | x86_64) config_target="linux-x86_64" ;;
-	*)
-		log_warn "Unsupported arch '$target_arch'. Using generic."
-		config_target="linux-generic32"
-		;;
-	esac
+	config_target=$(_openssl_get_config_target "$cc")
 
 	local -a config_args=("$config_target" "no-shared" "no-tests" "--prefix=$install_dir")
 	if ! (./Configure "${config_args[@]}" >>"$log_file" 2>&1); then
@@ -84,9 +87,11 @@ build_openssl() {
 	log_header "Copying OpenSSL artifacts to toolchain sysroot"
 	validate_command "Creating final lib directory" mkdir -p "$final_sysroot/lib"
 	validate_command "Creating final include directory" mkdir -p "$final_sysroot/include"
+	validate_command "Creating final pkgconfig directory" mkdir -p "$final_sysroot/lib/pkgconfig"
 
 	validate_command "Copying static libraries" cp -a "$install_dir"/lib/*.a "$final_sysroot/lib/"
 	validate_command "Copying headers" cp -a "$install_dir"/include/openssl "$final_sysroot/include/"
+	validate_command "Copying pkg-config files" cp -a "$install_dir"/lib/pkgconfig/*.pc "$final_sysroot/lib/pkgconfig/"
 
 	# Cleanup
 	log_info "Cleaning up temporary OpenSSL install directory..."
@@ -137,7 +142,8 @@ _openssl_download_and_extract() {
 
 	log_header "Extracting OpenSSL $version"
 	rm -rf "$dest_dir/openssl-$version"
-	if ! file_extract_archive "$archive_path" "$dest_dir"; then
+	if ! validate_command "Extracting OpenSSL archive" tar -xzf "$archive_path" -C "$dest_dir"; then
+		log_error "Failed to extract OpenSSL archive."
 		return 1
 	fi
 	return 0

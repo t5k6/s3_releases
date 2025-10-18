@@ -37,34 +37,45 @@ _fill_tc_array() {
 }
 
 _create_module_arrays() {
-	i=0
-	for e in $(echo "$addons" | sed 's/WEBIF_//g;s/WITH_//g;s/MODULE_//g;s/CS_//g;s/HAVE_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g'); do
-		SHORT_ADDONS+=($e)
-		SHORT_MODULENAMES+=($e)
+	# Clear arrays to ensure a clean state on re-runs
+	SHORT_ADDONS=() SHORT_PROTOCOLS=() SHORT_READERS=() SHORT_CARD_READERS=()
+	SHORT_MODULENAMES=() ALL_MODULES_LONG=()
+	declare -gA INTERNAL_MODULES=()
+
+	# Process Addons
+	for long_name in $addons; do
+		short_name=$(echo "$long_name" | sed 's/WEBIF_//g;s/WITH_//g;s/MODULE_//g;s/CS_//g;s/HAVE_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g')
+		SHORT_ADDONS+=("$short_name")
+		SHORT_MODULENAMES+=("$short_name")
+		ALL_MODULES_LONG+=("$long_name")
+		INTERNAL_MODULES["$short_name"]="$long_name"
 	done
 
-	for e in ${protocols//MODULE_/}; do
-		SHORT_PROTOCOLS+=($e)
-		SHORT_MODULENAMES+=($e)
+	# Process Protocols
+	for long_name in $protocols; do
+		short_name=${long_name#MODULE_}
+		SHORT_PROTOCOLS+=("$short_name")
+		SHORT_MODULENAMES+=("$short_name")
+		ALL_MODULES_LONG+=("$long_name")
+		INTERNAL_MODULES["$short_name"]="$long_name"
 	done
 
-	for e in ${readers//READER_/}; do
-		SHORT_READERS+=($e)
-		SHORT_MODULENAMES+=($e)
+	# Process Readers
+	for long_name in $readers; do
+		short_name=${long_name#READER_}
+		SHORT_READERS+=("$short_name")
+		SHORT_MODULENAMES+=("$short_name")
+		ALL_MODULES_LONG+=("$long_name")
+		INTERNAL_MODULES["$short_name"]="$long_name"
 	done
 
-	for e in ${card_readers//CARDREADER_/}; do
-		SHORT_CARD_READERS+=($e)
-		SHORT_MODULENAMES+=($e)
-	done
-
-	for e in $addons $protocols $readers $card_readers; do
-		ALL_MODULES_LONG+=($e)
-	done
-
-	for e in "${SHORT_MODULENAMES[@]}"; do
-		INTERNAL_MODULES["$e"]="${ALL_MODULES_LONG[i]}"
-		((i++))
+	# Process Card Readers
+	for long_name in $card_readers; do
+		short_name=${long_name#CARDREADER_}
+		SHORT_CARD_READERS+=("$short_name")
+		SHORT_MODULENAMES+=("$short_name")
+		ALL_MODULES_LONG+=("$long_name")
+		INTERNAL_MODULES["$short_name"]="$long_name"
 	done
 }
 

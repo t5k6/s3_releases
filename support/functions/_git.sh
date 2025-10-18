@@ -41,7 +41,11 @@ repo_checkout_git() {
 	# Reset and backup repository state
 	validate_command "Resetting config" "${repodir}/config.sh" -R
 	[ -f "$ispatched" ] && rm -f "$ispatched"
-	validate_command "Backing up repository" tar_repo
+
+	# Use new unified backup function
+	if ! repo_backup; then
+		log_warn "Initial repository backup failed."
+	fi
 
 	err_pop_context
 	return 0
@@ -67,7 +71,7 @@ repo_update_git() {
 	log_info "Repository: $g_l$URL_OSCAM_REPO${w_l}"
 
 	#check shallow cloned repo
-	cd "${repodir}"
+	cd "${repodir}" || log_fatal "Could not enter repository directory." "$EXIT_MISSING"
 	if [ ! -f "$(git rev-parse --git-dir)"/shallow ]; then
 		validate_command "Resetting local changes" git reset --hard HEAD
 		validate_command "Switching to master branch" git checkout --quiet master
@@ -75,7 +79,7 @@ repo_update_git() {
 		validate_command "Fetching tags" git pull --quiet --tags
 	else
 		log_warn "Repository is a shallow clone. Performing a fresh checkout to ensure consistency."
-		cd "$workdir"
+		cd "$workdir" || return 1
 		branch="$(BRANCH)"
 		validate_command "Removing shallow clone directory" rm -rf "${repodir}"
 		local clone_depth
@@ -91,7 +95,12 @@ repo_update_git() {
 	log_info "Local Path: $y_l${repodir}${w_l}"
 
 	validate_command "Resetting config" "${repodir}/config.sh" -R
-	tar_repo
+
+	# Use new unified backup function
+	if ! repo_backup; then
+		log_warn "Repository backup failed after update."
+	fi
+
 	err_pop_context
 	return 0
 }
@@ -109,7 +118,9 @@ gitclone() {
 			return 1
 		fi
 		if [ "$1" != "master" ]; then
-			cd "${repodir}" && git -c advice.detachedHead=false checkout "$1"
+			if ! git -C "${repodir}" -c advice.detachedHead=false checkout "$1"; then
+				return 1
+			fi
 		fi
 	else
 		# Shallow clone a repo (fast)
@@ -127,8 +138,8 @@ giturl() {
 
 repo_get_git_revision() {
 	if echo "$1" | grep -qocP '^(https?|git@.*)://\S+'; then
-		git ls-remote $1 2>/dev/null | head -1 | awk '{print substr($1, 1, 7)}' || echo 0
+		git ls-remote "$1" 2>/dev/null | head -1 | awk '{print substr($1, 1, 7)}' || echo 0
 	else
-		git -C $1 rev-parse --short HEAD 2>/dev/null || echo 0
+		git -C "$1" rev-parse --short HEAD 2>/dev/null || echo 0
 	fi
 }

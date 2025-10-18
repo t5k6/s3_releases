@@ -49,7 +49,11 @@ repo_checkout_svn() {
 
 	validate_command "Resetting config" "${repodir}/config.sh" -R
 	[ -f "$ispatched" ] && rm -f "$ispatched"
-	validate_command "Backing up repository" tar_repo
+
+	# Use new unified backup function
+	if ! repo_backup; then
+		log_warn "Initial repository backup failed."
+	fi
 
 	err_pop_context
 	return 0
@@ -86,7 +90,12 @@ repo_update_svn() {
 	log_info "Local Path: $y_l${repodir}${w_l}"
 
 	validate_command "Resetting config" "${repodir}/config.sh" -R
-	tar_repo
+
+	# Use new unified backup function
+	if ! repo_backup; then
+		log_warn "Repository backup failed after update."
+	fi
+
 	err_pop_context
 	return 0
 }

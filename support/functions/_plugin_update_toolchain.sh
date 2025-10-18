@@ -17,8 +17,7 @@ fngsrcdir="$ctdir/freetz-ng"
 andksrcdir="$ctdir/android-ndk"
 cpus="$(getconf _NPROCESSORS_ONLN)"
 
-# De-nested and moved from _get_toolchain_properties
-_get_toolchain_pkgconfig() {
+_tup_get_toolchain_pkgconfig() {
 	local prefixdir="$1"
 
 	# Try to find pkgconfig directory in common locations
@@ -35,7 +34,7 @@ _get_toolchain_pkgconfig() {
 	echo "$prefixdir/lib/pkgconfig"
 }
 
-tcupdate() {
+plugin_run_toolchain_updater() {
 	[ -f "$workdir/DEVELOPMENT" ] && disable_syscheck="1" && disable_template_versioning="1" && source "$workdir/DEVELOPMENT" # DEVELOPMENT should contain a CURL_GITHUB_TOKEN to avoid github rate limiting
 
 	CMDTC="$1"
@@ -54,7 +53,7 @@ tcupdate() {
 	#backup config
 	if [ "$CMDTC" == "-r" ] || [ "$CMDTC" == "--reset" ]; then
 		if [ -f "$configname" ]; then
-			if ! _check_github_api_limits 12; then
+			if ! TUP_CHECK_GITHUB_API_LIMITS 12; then
 				echo -e "${y_l}RESET -> ${txt_s3tup_msg_reset_config1}${re_}"
 				bcn="$configname".$(date +"%Y%m%d%H%M%S")
 				mv "$configname" "$bcn"
@@ -85,13 +84,18 @@ tcupdate() {
 	fi
 
 	#load config
-	source "$configname"
+	if ! cfg_load_file "tup_plugin" "$configname"; then
+		log_fatal "Failed to load TUP plugin config."
+	fi
 
 	#check config
 	_check_config
 
 	#ct-ng must not be run as root unless you forcing it by config
-	if ! _check_root || [ "$CTNG_BUILD_AS_ROOT" == "1" ]; then
+	local ctng_build_as_root=$(cfg_get_value "tup_plugin" "CTNG_BUILD_AS_ROOT" "0")
+	local libs_auto_integrate=$(cfg_get_value "tup_plugin" "LIBS_AUTO_INTEGRATE" "1")
+	local libs_list_beta=$(cfg_get_value "tup_plugin" "LIBS_LIST_BETA" "0")
+	if ! _check_root || [ "$ctng_build_as_root" == "1" ]; then
 		CT_START_BUILD=1
 	else
 		CT_START_BUILD=0
@@ -161,7 +165,7 @@ tcupdate() {
 							fi
 						fi
 						MENU_OPTIONS+=("$_toolchainname" "$icolor$_description\Zn\Z2$tcdate\Zn" "${txt_s3tup_menu_toolchain_arch}${tcarch//-/_} | ${txt_s3tup_menu_toolchain_folder}$tcdir/$i")
-						counter
+						((COUNT++))
 					fi
 				done
 			fi
@@ -177,9 +181,9 @@ tcupdate() {
 
 			case $ret in
 			0) #Update toolchain
-				_integrate_libs "$tc" "" "1" ;;
+				ui_show_library_integration_menu "$tc" "" "1" ;;
 			1) #Start crosstool-NG
-				_create_tc "" "" "1" ;;
+				ui_show_toolchain_creation_menu "" "" "1" ;;
 			2) #Backup toolchain
 				_check_toolchain $tc && _backup "$tc" "$tc" >/dev/null || [ -z "$CMDTC" ] && sleep 2 && tcupdate "$CMDTC" "$OPTION1" "$OPTION2" "$FLAG" || _nl && exit
 				sleep 2
@@ -195,11 +199,11 @@ tcupdate() {
 			esac
 		done
 	elif [ -n "$tc" ]; then #update toolchain
-		_integrate_libs "$tc" "$OPTION1" "$FLAG"
+		ui_show_library_integration_menu "$tc" "$OPTION1" "$FLAG"
 		[ "$FLAG" -gt 0 ] && return || bye
 	fi
 }
-_integrate_libs() {
+ui_show_library_integration_menu() {
 	local tc="$1" libkeys="$2" menu_close props i icount err
 
 	#toolchain native not supported and exists check
@@ -241,10 +245,12 @@ _integrate_libs() {
 		unset libversioncurrent
 		unset libversioncompare
 		unset txthint
-		for libkey in "${LIBS[@]}"; do
+		local libs_keys
+		readarray -t libs_keys <<<"$(cfg_get_value "tup_plugin" "LIBS")"
+		for libkey in "${libs_keys[@]}"; do
 			[ "${!libkey}" == "0" ] && continue
 			libbeta="$libkey"_beta
-			[ "$LIBS_LIST_BETA" == "0" ] && [ "${!libbeta}" == "1" ] && continue #skip beta libraries in list
+			[ "$libs_list_beta" == "0" ] && [ "${!libbeta}" == "1" ] && continue #skip beta libraries in list
 			libname="$libkey"_name
 			libname="$(_replace_tokens "${!libname}")"
 			libversion="$libkey"_version
@@ -289,7 +295,7 @@ _integrate_libs() {
 			libselectedflag="$libcheckfile"
 
 			MENU_OPTIONS+=("$libkey" "${libdescfmt}${libdesc}\Zn$(printf '%*s' $((26 - ${#libdesc})))${libtxtfmt}$([ $libversioncurrent ] && echo $libversioncompare)	$(echo $libversioncurrent | sed -e 's/^$/ ---/g')\Zn" "$(echo $libselected)" "$([ $libname ] && echo "${libdesc}: ${liburl}")")
-			counter
+			((COUNT++))
 
 			#     0 key     1 desc     2 version     3 checkversion     4 checkfile 5 current version    6 url      7 tasks array
 			lib=("$libkey" "$libname" "$libversion" "$libversioncheck" "$libcheck" "$libversioncurrent" "$liburl" "($(printf " %q" "${libtasks[@]}"))")
@@ -348,7 +354,17 @@ _integrate_libs() {
 						task=$(_replace_tokens "$task") #replace tokens
 						buildtasks+=("$task")
 					done
-					_build_library_plugin "($i/$icount) $tc: ${txt_lib} ${lib[1]} ${lib[2]}" "$(_extract "$(_dl "${lib[6]}" "${lib[1]} ${lib[2]}")" "$tmpdir" 2>/dev/null)" "$logfile" "${buildtasks[@]}"
+					local lib_file="$tmpdir/$(basename "${lib[6]}")"
+					if ! net_download_file "${lib[6]}" "$lib_file" "ui_show_progressbox 'Downloading ${lib[1]} ${lib[2]}...'"; then
+						echo -e "${r_l}  ${txt_error}:${y_l} Failed to download ${lib[1]} ${lib[2]}${rs_}" >&2
+						continue
+					fi
+					if ! file_extract_archive "$lib_file" "$tmpdir" "ui_show_progressbox 'Extracting ${lib[1]} ${lib[2]}...'"; then
+						echo -e "${r_l}  ${txt_error}:${y_l} Failed to extract ${lib[1]} ${lib[2]}${rs_}" >&2
+						continue
+					fi
+					local lib_srcdir="$tmpdir/$(basename "$lib_file" | sed 's|\.tar\.gz\|\.tar\.bz2\|\.tar\.xz\|\.tgz\|\.tbz2\|\.txz\|\.tar\|\.zip\|\.7z\|\.rar\|\.exe||')"
+					_build_library_plugin "($i/$icount) $tc: ${txt_lib} ${lib[1]} ${lib[2]}" "$lib_srcdir" "$logfile" "${buildtasks[@]}"
 					err=$(($err + $?))
 				done
 				[ "${#buildtasks[@]}" == "0" ] && echo -e "${r_l}  ${txt_error}:${y_l} ${o} ${w_l}${txt_s3tup_msg_library_not_found}${rs_}"
@@ -378,7 +394,7 @@ _integrate_libs() {
 		[ "${#libkeys}" -gt 0 ] && menu_close=1
 	done
 }
-_create_tc() {
+ui_show_toolchain_creation_menu() {
 	_sz # Prepare DIALOG settings
 	unset TPL_LIST
 	local menu_close compilername libkeys use ldf first base_url
@@ -419,7 +435,7 @@ _create_tc() {
 						color=""
 					fi
 					MENU_OPTIONS+=("$t" "$color$desc\Zn" "off" "template filename:$cttpldir/$t, version:$version$changed$copyof")
-					counter
+					((COUNT++))
 				done
 			fi
 			[ $COUNT -eq 0 ] && MENU_OPTIONS+=("" "$txt_s3tup_menu_template_notfound" "off" "$txt_s3tup_menu_template_notfound")
@@ -485,7 +501,7 @@ _create_tc() {
 					(
 						echo -e "$pdesc - ${txt_s3tup_msg_cross_toolchain_log} - $(date +"%F %T")"
 						echo -e "${y_l}$sp\n${txt_b2} ($i/$icount): ${txt_s3tup_msg_cross_toolchain_commandlist} $tpl:\n$sp"
-					) | _log "$logfile"
+					) >>"$logfile" 2>&1
 
 					#set ctsrcdir based on template type
 					template_type="$(_get_template_type "$cttpldir/$tpl")"
@@ -495,49 +511,49 @@ _create_tc() {
 					ctsrcdir="${!ctsrcdir}"
 
 					#copy template
-					echo "rm -f \"$ctsrcdir/.config\"* 2>/dev/null;cp -f \"$cttpldir/$tpl\" \"$ctsrcdir/.config\";" | _log "$logfile"
+					echo "rm -f \"$ctsrcdir/.config\"* 2>/dev/null;cp -f \"$cttpldir/$tpl\" \"$ctsrcdir/.config\";" >>"$logfile" 2>&1
 					rm -f "$ctsrcdir/.config"* 2>/dev/null
 					cp -f "$cttpldir/$tpl" "$ctsrcdir/.config"
 
 					#prepare template and build
 					case "$tpl_type" in
 					"CTNG") #CT_LOCAL_TARBALLS_DIR aka cache folder for downloads
-						echo "sed -i \"s#.*CT_LOCAL_TARBALLS_DIR=.*#CT_LOCAL_TARBALLS_DIR=\"$dldir\"#g\" \"$ctsrcdir/.config\";" | _log "$logfile"
+						echo "sed -i \"s#.*CT_LOCAL_TARBALLS_DIR=.*#CT_LOCAL_TARBALLS_DIR=\"$dldir\"#g\" \"$ctsrcdir/.config\";" >>"$logfile" 2>&1
 						sed -i "s#.*CT_LOCAL_TARBALLS_DIR=.*#CT_LOCAL_TARBALLS_DIR=\"$dldir\"#g" "$ctsrcdir/.config"
 						#CT_PREFIX_DIR aka folder that contains the final toolchain
-						echo "sed -i \"s#.*CT_PREFIX_DIR=.*#CT_PREFIX_DIR=\"$tcdir/$tpl\"#g\" \"$ctsrcdir/.config\";" | _log "$logfile"
+						echo "sed -i \"s#.*CT_PREFIX_DIR=.*#CT_PREFIX_DIR=\"$tcdir/$tpl\"#g\" \"$ctsrcdir/.config\";" >>"$logfile" 2>&1
 						sed -i "s#.*CT_PREFIX_DIR=.*#CT_PREFIX_DIR=\"$tcdir/$tpl\"#g" "$ctsrcdir/.config"
 						#CT_TOOLCHAIN_PKGVERSION aka version output extension
-						echo "sed -i \"s#.*CT_TOOLCHAIN_PKGVERSION=.*#CT_TOOLCHAIN_PKGVERSION=\"simplebuild3\"#g\" \"$ctsrcdir/.config\";" | _log "$logfile"
+						echo "sed -i \"s#.*CT_TOOLCHAIN_PKGVERSION=.*#CT_TOOLCHAIN_PKGVERSION=\"simplebuild3\"#g\" \"$ctsrcdir/.config\";" >>"$logfile" 2>&1
 						sed -i "s#.*CT_TOOLCHAIN_PKGVERSION=.*#CT_TOOLCHAIN_PKGVERSION=\"simplebuild3\"#g" "$ctsrcdir/.config"
 						#CT_PARALLEL_JOBS aka parallel task count for building
 						echo "echo -e \"\nCT_PARALLEL_JOBS=$cpus\" >>\"$ctsrcdir/.config\";"
 						echo -e "\nCT_PARALLEL_JOBS=$cpus" >>"$ctsrcdir/.config"
 						#CT_ALLOW_BUILD_AS_ROOT aka force build as root
-						_check_root && [ "$CTNG_BUILD_AS_ROOT" == "1" ] && echo "echo -e \"\nCT_EXPERIMENTAL=y\nCT_ALLOW_BUILD_AS_ROOT=y\nCT_ALLOW_BUILD_AS_ROOT_SURE=y\" >>\"$ctsrcdir/.config\";" | _log "$logfile" &&
+						_check_root && [ "$CTNG_BUILD_AS_ROOT" == "1" ] && echo "echo -e \"\nCT_EXPERIMENTAL=y\nCT_ALLOW_BUILD_AS_ROOT=y\nCT_ALLOW_BUILD_AS_ROOT_SURE=y\" >>\"$ctsrcdir/.config\";" >>"$logfile" 2>&1 &&
 							echo -e "\nCT_EXPERIMENTAL=y\nCT_ALLOW_BUILD_AS_ROOT=y\nCT_ALLOW_BUILD_AS_ROOT_SURE=y" >>"$ctsrcdir/.config"
 						bcl=$(printf '%s\n' "${CTNG_BUILD_tasks[@]}")
 						;;
 					"FNG") #FREETZ_JLEVEL aka parallel task count for building
-						echo "echo -e \"\FREETZ_JLEVEL=$cpus\" >>\"$ctsrcdir/.config\";" | _log "$logfile"
+						echo "echo -e \"\FREETZ_JLEVEL=$cpus\" >>\"$ctsrcdir/.config\";" >>"$logfile" 2>&1
 						echo -e "\nFREETZ_JLEVEL=$cpus" >>"$ctsrcdir/.config"
 						bcl=$(printf '%s\n' "${FNG_BUILD_tasks[@]}")
 						;;
 					"ANDK") #resource template
-						grep '^ANDK_.*' "$ctsrcdir/.config" | _log "$logfile"
+						grep '^ANDK_.*' "$ctsrcdir/.config" >>"$logfile" 2>&1
 						source "$ctsrcdir/.config"
 						bcl=$(printf '%s\n' "${ANDK_BUILD_tasks[@]}")
 						;;
 					esac
 
-					echo -e "cd \"${ctsrcdir}\";\n$(_replace_tokens "$bcl")\n$sp${re_}" | _log "$logfile"
+					echo -e "cd \"${ctsrcdir}\";\n$(_replace_tokens "$bcl")\n$sp${re_}" >>"$logfile" 2>&1
 					sleep 2
 
 					if [ "$CT_START_BUILD" -eq 1 ]; then
 						cd "$ctsrcdir"
 
 						#print out detected libs in current toolchain
-						[ "${#libkeys}" -gt 0 -a "$LIBS_AUTO_INTEGRATE" -eq 1 ] && echo -e "${y_l}\n${txt_s3tup_msg_cross_toolchain_library_detection}\n${b_l}$(echo "$libkeys" | tr ',' '\n' | sort -hr)${re_}" | _log "$logfile"
+						[ "${#libkeys}" -gt 0 -a "$LIBS_AUTO_INTEGRATE" -eq 1 ] && echo -e "${y_l}\n${txt_s3tup_msg_cross_toolchain_library_detection}\n${b_l}$(echo "$libkeys" | tr ',' '\n' | sort -hr)${re_}" >>"$logfile" 2>&1
 
 						#print out crosstool version and generate build command list
 						unset buildtasks
@@ -546,14 +562,14 @@ _create_tc() {
 							echo -e "${g_l}\n$(
 								./ct-ng | grep 'crosstool-NG version' &
 								2>/dev/null | tail -1
-							)\n${re_}" | _log "$logfile"
+							)\n${re_}" >>"$logfile" 2>&1
 							for task in "${CTNG_BUILD_tasks[@]}"; do
 								task=$(_replace_tokens "$task") #replace tokens
 								buildtasks+=("$task")
 							done
 							;;
 						"FNG")
-							echo -e "${g_l}\n$([ -f "tools/freetz-revision" ] && tools/freetz-revision || tools/freetz_revision 2>&1 | tail -1)\n${re_}" | _log "$logfile"
+							echo -e "${g_l}\n$([ -f "tools/freetz-revision" ] && tools/freetz-revision || tools/freetz_revision 2>&1 | tail -1)\n${re_}" >>"$logfile" 2>&1
 							[[ ! $(umask) == 0022 ]] && umask 0022
 							for task in "${FNG_BUILD_tasks[@]}"; do
 								task=$(_replace_tokens "$task") #replace tokens
@@ -561,7 +577,7 @@ _create_tc() {
 							done
 							;;
 						"ANDK")
-							echo -e "${g_l}\n$(grep '^Pkg.Desc =' "source.properties" | awk -F'=' '{print $2}' | xargs) $(grep '^Pkg.Revision =' "source.properties" | awk -F'=' '{print $2}' | xargs)\n${re_}" | _log "$logfile"
+							echo -e "${g_l}\n$(grep '^Pkg.Desc =' "source.properties" | awk -F'=' '{print $2}' | xargs) $(grep '^Pkg.Revision =' "source.properties" | awk -F'=' '{print $2}' | xargs)\n${re_}" >>"$logfile" 2>&1
 							for task in "${ANDK_BUILD_tasks[@]}"; do
 								task=$(_replace_tokens "$task") #replace tokens
 								echo_task="$(printf "%q" "$task")"
@@ -572,7 +588,12 @@ _create_tc() {
 						esac
 
 						#run build and save error
-						(eval "${buildtasks[@]}") 2>&1
+						for task in "${buildtasks[@]}"; do
+							if ! run_with_logging "$logfile" $task; then
+								log_error "Failed to execute task: $task"
+								((err++))
+							fi
+						done
 
 						case "$tpl_type" in
 						"CTNG") err=$(grep -c '\[ERROR\]' "$ctsrcdir/build.log") ;;
@@ -628,7 +649,7 @@ _create_tc() {
 								fi
 
 								#compress toolchain
-								_compress "$dldir/$(decode "$_t1e")$tpl.tar.xz" "$tcdir/$tpl" | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_compress_title} $tpl ${txt_to} $(decode "$_t1e")$tpl.tar.xz ]- " "$pb_" "$_lines" "$_cols"
+								_compress "$dldir/$(util_decode_base64 "$URL_TOOLCHAIN_BASE_B64")$tpl.tar.xz" "$tcdir/$tpl" | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_compress_title} $tpl ${txt_to} $(util_decode_base64 "$URL_TOOLCHAIN_BASE_B64")$tpl.tar.xz ]- " "$pb_" "$_lines" "$_cols"
 
 								#create toolchain.cfg
 								props=$(_get_template_properties "$cttpldir/$tpl")
@@ -636,13 +657,13 @@ _create_tc() {
 								cflags=$(echo "$props" | awk -F'^' '{print $3}' | xargs)
 								[ -z "$ldf" ] && ldf=$(echo "$props" | awk -F'^' '{print $4}' | xargs)
 
-								_create_toolchaincfg "$tcdir/$tpl" "$tpl" "$target" "$sysroot" "" "$desc" "" "$dldir/$(decode "$_t1e")$tpl.tar.xz" "yes" "$tpl_type_name" "$use" "" "$ldf" "$cflags" "0" "$tpl_type" ""
+								_create_toolchaincfg "$tcdir/$tpl" "$tpl" "$target" "$sysroot" "" "$desc" "" "$dldir/$(util_decode_base64 "$URL_TOOLCHAIN_BASE_B64")$tpl.tar.xz" "yes" "$tpl_type_name" "$use" "" "$ldf" "$cflags" "0" "$tpl_type" ""
 							else
 								_paktc_timer 10
 							fi
-						) | _log "$logfile"
+						) >>"$logfile" 2>&1
 					else
-						echo -e "${r_l}${CTNG_ROOT_BUILD_ERROR}${y_l}${CTNG_ROOT_BUILD_CMD}${re_}" | _log "$logfile"
+						echo -e "${r_l}${CTNG_ROOT_BUILD_ERROR}${y_l}${CTNG_ROOT_BUILD_CMD}${re_}" >>"$logfile" 2>&1
 						_paktc_timer 10
 					fi
 				else
@@ -703,8 +724,8 @@ _migrations() {
 		if [ ${#tc_type} -gt 0 ]; then
 			tf=$(grep '^_toolchainfilename=' "$tccfgdir/$t")
 			tfn=$(echo "$tf" | awk -F'"' '{print $2}' | xargs)
-			if [[ $(decode "$tfn") =~ ^$(decode "$_t1e").* ]]; then
-				new_tfn="$(decode "$tfn")" && new_tfn="$(printf ${new_tfn/$(decode "$_t1e")/} | base64 -w0)"
+			if [[ $(util_decode_base64 "$tfn") =~ ^$(util_decode_base64 "$URL_TOOLCHAIN_BASE_B64").* ]]; then
+				new_tfn="$(util_decode_base64 "$tfn")" && new_tfn="$(printf ${new_tfn/$(util_decode_base64 "$URL_TOOLCHAIN_BASE_B64")/} | base64 -w0)"
 				sed -i "s|$tfn|$new_tfn|g" "$tccfgdir/$t"
 				new_tf=$(grep '^_toolchainfilename=' "$tccfgdir/$t")
 				mig_list+="\n${txt_update} ${p_l}${t}${re_} ${txt_tc} ${txt_conf} ${p_l}$tccfgdir/$t${re_}\n${y_l}   - ${tf}${re_}\n${g_l}   + ${new_tf}\n${re_}"
@@ -745,6 +766,7 @@ _build_library_plugin() {
 	local desc="$1" libsrcdir="$2" lf="$3" # Save the first 3 arguments in variables
 	shift 3                                # Shift all 3 arguments to the left (original $1,$2,$3 gets lost)
 	local tasks=("$@")                     # Rebuild the array with rest of arguments
+	local build_status=0
 
 	(
 		bcl=$(printf '%s\n' "${tasks[@]}")
@@ -755,19 +777,19 @@ _build_library_plugin() {
 			echo -e "$sp\n${txt_s3tup_msg_build_library_commandlist} $desc:\n$sp\ncd "$libsrcdir\;"\n$bcl\n$sp"
 			sleep 2
 			cd "$libsrcdir"
-			(eval "${tasks[@]}") 2>&1
-		) | _log "$lf"
+			(eval "${tasks[@]}")
+			build_status=${PIPESTATUS[0]}
+		) >>"$lf" 2>&1
 	) | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_build_library_title} $desc ]- " "$pb_" "$_lines" "$_cols"
 	sleep 2
 
 	#build error message
-	error_on_build=$(grep -cw1 Error "$lf")
-	if [ $error_on_build -gt 0 ]; then
+	if [[ "$build_status" -ne 0 ]]; then
 		echo -e "${r_l}${txt_s3tup_msg_build_library_error}\n${b_l}  ${lf}\n${y_l}" >$(tty)
 		_paktc_timer 10
 		echo -e "${re_}${w_l}"
 	fi
-	return $error_on_build
+	return "$build_status"
 }
 
 _tpl_editor() {
@@ -857,7 +879,7 @@ _ctng_setup() {
 			echo -e "$CTNG_ROOT_BUILD_ERROR$CTNG_ROOT_BUILD_CMD"
 			sleep 5
 		fi
-	) | _log "$logfile" | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_ctng_setup_title} crosstool-NG ]- " "$pb_" "$_lines" "$_cols"
+	) >>"$logfile" 2>&1 | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_ctng_setup_title} crosstool-NG ]- " "$pb_" "$_lines" "$_cols"
 	return $setup_status
 }
 _fng_setup() {
@@ -890,7 +912,7 @@ _fng_setup() {
 			echo -e "$CTNG_ROOT_BUILD_ERROR$CTNG_ROOT_BUILD_CMD"
 			sleep 5
 		fi
-	) | _log "$logfile" | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_fng_setup_title} Freetz-NG ]- " "$pb_" "$_lines" "$_cols"
+	) >>"$logfile" 2>&1 | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_fng_setup_title} Freetz-NG ]- " "$pb_" "$_lines" "$_cols"
 	return $setup_status
 }
 _andk_setup() {
@@ -921,7 +943,7 @@ _andk_setup() {
 			echo -e "$CTNG_ROOT_BUILD_ERROR$CTNG_ROOT_BUILD_CMD"
 			sleep 5
 		fi
-	) | _log "$logfile" | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_andk_setup_title} Android-NDK ]- " "$pb_" "$_lines" "$_cols"
+	) >>"$logfile" 2>&1 | "$gui" "$st_" "$bt_" "$title_ \Z0$pdesc\Zn" "--colors" "--title" " -[ ${txt_s3tup_menu_andk_setup_title} Android-NDK ]- " "$pb_" "$_lines" "$_cols"
 	return $setup_status
 }
 _dl() {
@@ -1411,7 +1433,7 @@ _check_pkg() {
 		echo -e "${r_l}\nSYSCHECK -> ${txt_s3tup_msg_syscheck3}\n${y_l}${dialog_compile}\n${re_}" && _paktc_timer 10
 	fi
 }
-_check_github_api_limits() {
+TUP_CHECK_GITHUB_API_LIMITS() {
 	git config --global 'versionsort.suffix' '-' 2>/dev/null
 	limit=$(curl --silent $CURL_GITHUB_TOKEN "https://api.github.com/rate_limit" | jq -r '.resources.core.limit')
 	remaining=$(curl --silent $CURL_GITHUB_TOKEN "https://api.github.com/rate_limit" | jq -r '.resources.core.remaining')

@@ -254,6 +254,15 @@ ui_show_textbox() {
 	"$gui" "$st_" "$bt_" "$title_" --title "$title" --textbox "$file_path" "$height" "$width"
 }
 
+ui_show_programbox() {
+	# Display output from a piped command in a scrolling box.
+	# Usage: command | ui_show_programbox "Title" [height] [width]
+	local title="$1"
+	local height="${2:-20}"
+	local width="${3:-75}"
+	"$gui" "$st_" "$bt_" "$title_" --title "$title" --programbox "$height" "$width"
+}
+
 menu_config_checkbox() {
 	# Configuration checklist from associative array
 	local config_description="$1"

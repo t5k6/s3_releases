@@ -208,6 +208,20 @@ sys_check_output() {
 	esac
 }
 
+sys_get_distro_installer() {
+	if [[ -f /etc/debian_version ]]; then
+		echo "debian_os"
+	elif [[ -f /etc/redhat-release ]]; then
+		echo "redhat_os"
+	elif [[ -f /etc/manjaro-release || -f /etc/arch-release ]]; then
+		echo "manjaro_os"
+	elif [[ -d /etc/YaST2 ]]; then
+		echo "suse_os"
+	else
+		echo "unknown"
+	fi
+}
+
 # Parameters (all optional):
 #   $1: installer name (or "auto")
 #   $2: add architecture (not implemented yet)
@@ -249,22 +263,12 @@ syscheck() {
 		else
 			prefix="sh -c"
 		fi
-		installer="unknown"
-
-		# Debian and Ubuntu
-		[ -f /etc/debian_version ] && installer="debian_os"
-
-		# CentOS and Redhat
-		[ -f /etc/redhat-release ] && installer="redhat_os"
-
-		# Manjaro (/etc/os-release)
-		[ -f /etc/manjaro-release ] || [ -f /etc/arch-release ] && installer="manjaro_os"
-
-		# SuSE (/etc/SuSE-release is depreciated -> check for YaST2)
-		[ -d /etc/YaST2 ] && installer="suse_os"
+		# Abstracted OS detection
+		local installer
+		installer=$(sys_get_distro_installer)
 
 		# Optional override via parameter
-		#[[ $override ]] && installer=$override;
+		[[ -n "$override" ]] && installer="$override"
 		printf '\n%s  Selected installer:    %s\n' "$w_l" "$P$installer"
 
 		if type -t "$installer" >/dev/null; then
@@ -280,75 +284,76 @@ syscheck() {
 }
 
 upx_native_installer() {
-	echo -e "$w_l  Installing ${g_l}upx$w_l precompiled binary..." | _log "$install_log"
+	err_push_context "upx_native_installer"
+	log_info "Installing upx precompiled binary..."
+	local host_arch
 	case $(uname -m) in
-	i386 | i686) HOST_ARCH="i386" ;;
-	aarch64 | arm64) HOST_ARCH="arm64" ;;
-	arm*) HOST_ARCH="arm" ;;
-	*) HOST_ARCH="amd64" ;;
+	i386 | i686) host_arch="i386" ;;
+	aarch64 | arm64) host_arch="arm64" ;;
+	arm*) host_arch="arm" ;;
+	*) host_arch="amd64" ;;
 	esac
-	rm -rf "/tmp/upx_$HOST_ARCH.tar.xz" 2>/dev/null
-	UPX_TAG="$(git ls-remote --sort=-version:refname https://github.com/upx/upx.git --tags v*.*.* | grep -v '5.0.0\|alpha\|beta\|\-pre\|\-rc\|\^' | awk -F'/' 'NR==1 {print $NF}')"
-	echo -e "$w_l  ${g_l}upx$w_l version:$y_l $UPX_TAG ($HOST_ARCH)" | _log "$install_log"
-	UPX_URL="$(curl --silent "https://api.github.com/repos/upx/upx/releases/tags/$UPX_TAG" | jq -r '.assets | .[] | select( (.name | contains("-'$HOST_ARCH'_")) and (.name | endswith(".tar.xz"))) | .browser_download_url' | sed -e 's#\"##g')"
-	echo -e "$w_l  Downloading ${g_l}upx$w_l from $UPX_URL..." | _log "$install_log"
-	curl --silent -L --output "/tmp/upx_$HOST_ARCH.tar.xz" "$UPX_URL"
-	echo -e "$w_l  Installing ${g_l}upx$w_l to /usr/local/bin...$re_" | _log "$install_log"
-	[[ "$prefix" =~ ^su[[:space:]].* ]] && echo -en "$r_l\n  (upx installer) Enter $rootuser Password: "
-	$prefix "
-			(cd /usr/local/bin;
-			 tar -xvf "/tmp/upx_$HOST_ARCH.tar.xz" \$(tar -tf "/tmp/upx_$HOST_ARCH.tar.xz" | grep 'upx$') --strip-components=1);
-	" |& _log "$install_log" &>/dev/null
-	[[ "$prefix" =~ ^su[[:space:]].* ]] && echo
-	rm -rf "/tmp/upx_$HOST_ARCH.tar.xz" 2>/dev/null
+	local upx_tag archive_url archive_path="/tmp/upx_${host_arch}.tar.xz"
+
+	upx_tag=$(net_get_github_latest_release "upx/upx" "v*.*.*")
+	archive_url=$(net_get_github_asset_url "upx/upx" "$upx_tag" "upx-${host_arch}*.tar.xz")
+
+	if ! net_download_file "$archive_url" "$archive_path" "ui_show_infobox 'Downloading UPX'"; then
+		log_error "Failed to download UPX."
+		return 1
+	fi
+
+	# Use validate_command for the installation steps
+	local install_cmd="cd /usr/local/bin && tar -xvf '$archive_path' \$(tar -tf '$archive_path' | grep 'upx$') --strip-components=1"
+	if ! validate_command "Installing UPX binary" $prefix "$install_cmd"; then
+		log_error "Failed to install UPX."
+		return 1
+	fi
+	log_info "UPX installed successfully."
+	rm -f "$archive_path"
+	err_pop_context
 }
 
 libdvbcsa_native_installer() {
-	echo -e "$w_l  Installing ${g_l}libdvbcsa$w_l from source..." | _log "$install_log"
-	FLAGS="$(cat /proc/cpuinfo | grep -im1 flags | awk -F':' '{print $2}')"
-	FLAGS+="$(cat /proc/cpuinfo | grep -im1 features | awk -F':' '{print $2}')"
-	echo -e "FLAGS=\"$FLAGS\"\n" |& _log "$install_log" &>/dev/null
+	err_push_context "libdvbcsa_native_installer"
+	log_info "Installing libdvbcsa from source..."
+	local src_dir="/tmp/libdvbcsa"
+	local optimization="--enable-uint32" # default
 
-	echo "$FLAGS" | grep -qiw 'altivec' && optimization="--enable-altivec"
-	[ -z "$optimization" ] && echo "$FLAGS" | grep -qiw "avx2" && optimization="--enable-avx2"
-	[ -z "$optimization" ] && echo "$FLAGS" | grep -qiw "ssse3" && optimization="--enable-ssse3"
-	[ -z "$optimization" ] && echo "$FLAGS" | grep -qiw "sse2" && optimization="--enable-sse2"
-	[ -z "$optimization" ] && echo "$FLAGS" | grep -qiw "mmx" && optimization="--enable-mmx"
-	if [ -z "$optimization" ]; then
-		if [ -n "$(find "/usr/lib" -name "arm_neon.h" -type f -print -quit)" ]; then
-			echo "$FLAGS" | grep -qiw "neon\|simd\|asimd" && optimization="--enable-neon"
-		fi
+	# Detect optimization flags (logic remains the same)
+	local flags=$(grep -iE 'flags|features' /proc/cpuinfo | head -1 | awk -F':' '{print $2}')
+	[[ "$flags" =~ altivec ]] && optimization="--enable-altivec"
+	[[ "$flags" =~ avx2 ]] && optimization="--enable-avx2"
+	[[ "$flags" =~ ssse3 ]] && optimization="--enable-ssse3"
+	[[ "$flags" =~ sse2 ]] && optimization="--enable-sse2"
+	[[ "$flags" =~ mmx ]] && optimization="--enable-mmx"
+	if [[ "$flags" =~ neon|simd|asimd ]] && [ -n "$(find "/usr/lib" -name "arm_neon.h" -type f -print -quit)" ]; then
+		optimization="--enable-neon"
 	fi
-	[ -z "$optimization" ] && optimization="--enable-uint32"
-	echo -e "$w_l  ${g_l}libdvbcsa$w_l optimization autodetection:$y_l $optimization" | _log "$install_log"
 
-	rm -rf /tmp/libdvbcsa 2>/dev/null
-	echo -e "\ngit clone https://github.com/oe-mirrors/libdvbcsa.git /tmp/libdvbcsa" |& _log "$install_log" &>/dev/null
-	git clone https://github.com/oe-mirrors/libdvbcsa.git /tmp/libdvbcsa |& _log "$install_log" &>/dev/null
-	cd /tmp/libdvbcsa || return 1
+	log_info "Using optimization: $optimization"
 
-	echo -e "$w_l  Building ${g_l}libdvbcsa$w_l..." | _log "$install_log"
-	echo -e "\n./bootstrap && ./configure $optimization" |& _log "$install_log" &>/dev/null
-	(./bootstrap && ./configure "$optimization") |& _log "$install_log" &>/dev/null
-	if ! (./bootstrap && ./configure "$optimization") |& _log "$install_log" &>/dev/null; then
+	if ! validate_command "Cloning libdvbcsa repo" git clone https://github.com/oe-mirrors/libdvbcsa.git "$src_dir"; then
 		return 1
 	fi
 
-	echo -e "\nmake -j$(sys_get_cpu_count)" |& _log "$install_log" &>/dev/null
-	if ! make "-j$(sys_get_cpu_count)" |& _log "$install_log" &>/dev/null; then
+	cd "$src_dir" || return 1
+
+	if ! validate_command "Configuring libdvbcsa" ./bootstrap && ./configure "$optimization"; then
 		return 1
 	fi
 
-	echo -e "$w_l  Installing ${g_l}libdvbcsa$w_l...$re_" | _log "$install_log"
-	echo -e "\n$prefix make install" |& _log "$install_log" &>/dev/null
-	echo -e "\n$prefix \$(which ldconfig || printf '/sbin/ldconfig') && $prefix \$(which ldconfig || printf '/sbin/ldconfig') -v" |& _log "$install_log" &>/dev/null
-	[[ "$prefix" =~ ^su[[:space:]].* ]] && echo -en "$r_l\n  (libdvbcsa installer) Enter $rootuser Password: "
-	$prefix "
-			make install || return 1;
-			$(which ldconfig || printf '/sbin/ldconfig') && $(which ldconfig || printf '/sbin/ldconfig') -v;
-	" |& _log "$install_log" &>/dev/null
-	[[ "$prefix" =~ ^su[[:space:]].* ]] && echo
-	rm -rf /tmp/libdvbcsa 2>/dev/null
+	if ! validate_command "Building libdvbcsa" make -j"$(sys_get_cpu_count)"; then
+		return 1
+	fi
+
+	if ! validate_command "Installing libdvbcsa" $prefix "make install"; then
+		return 1
+	fi
+
+	log_info "libdvbcsa installed successfully."
+	rm -rf "$src_dir"
+	err_pop_context
 }
 
 sys_get_cpu_count() {

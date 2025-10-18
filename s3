@@ -37,7 +37,9 @@ mkdir -p $sdir/{archive,binaries,downloads,software,logs,patches,backup_repo,men
 # some migrations of deprecated directories
 for migdir in backup_svn backup_git; do
 	if [ -d "$sdir/$migdir" ]; then
-		mv -f "$sdir/$migdir"/{*,.*} "$brepo/" 2>/dev/null
+		shopt -s dotglob
+		mv -f "$sdir/$migdir"/* "$brepo/" 2>/dev/null
+		shopt -u dotglob
 		mv "$brepo/last.tar.gz" "$brepo/last${migdir: -3}.tar.gz" 2>/dev/null
 		ln -fs "$(readlink "$brepo/last${migdir: -3}.tar.gz" | awk -F'/' '{ print $NF }')" "$brepo/last${migdir: -3}.tar.gz"
 		rm -d "$sdir/$migdir"
@@ -108,7 +110,7 @@ pf_name="not_set"
 #internal vars
 OPENBOX=0
 UFS916003=0
-_t1e="VG9vbGNoYWluLQ=="
+URL_TOOLCHAIN_BASE_B64="VG9vbGNoYWluLQ=="
 
 run="0"
 cposx=0
@@ -134,14 +136,24 @@ cc_opts="-ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -f
 #load default urls
 source "$configdir/urls"
 
-#load custom urls
-[ -f "$workdir/oscamsource.url" ] && source "$workdir/oscamsource.url"
+# Load custom URLs using UCM
+if [ -f "$workdir/oscamsource.url" ]; then
+	log_info "Loading custom repository URLs from oscamsource.url"
+	cfg_load_file "urls" "$workdir/oscamsource.url"
+fi
 
-# switch trunkurl based on environment variable SOURCE
-# needs an existing oscamsource.url file containing trunkurl<SOURCE>="some url"
-# e.q. to force s3 to use trunkurlsvn which was defined in oscamsource.url, simply run: SOURCE=svn ./s3 menu
-forcedurl="trunkurl$SOURCE"
-[ -v trunkurl$SOURCE ] && trunkurl="${!forcedurl}" || unset SOURCE
+# Switch trunkurl based on environment variable SOURCE
+if [[ -n "$SOURCE" ]]; then
+	forced_url_key="trunkurl$SOURCE"
+	forced_url_val=$(cfg_get_value "urls" "$forced_url_key")
+	if [[ -n "$forced_url_val" ]]; then
+		log_info "Overriding repository URL with '$forced_url_key' from environment."
+		URL_OSCAM_REPO="$forced_url_val" # Overwrite the global directly
+	else
+		log_warn "Environment variable SOURCE='$SOURCE' was set, but key '$forced_url_key' not found in URL configs."
+		unset SOURCE
+	fi
+fi
 
 #load translationlist
 cd "$tdir"
@@ -195,11 +207,17 @@ S3_LOG_LEVEL=$(cfg_get_value "s3" "S3_LOG_LEVEL" "2")
 # Create a unique log file for this specific run.
 MAIN_LOG_FILE="$ldir/s3_run_$(date +%F_%H-%M-%S)_$$.log"
 
-# Redirect stdout and stderr to tee. This sends all output to both the
-# console and the main log file for the entire script's duration.
-# Stderr is merged into stdout for logging but redirected back to stderr
-# for console display, preserving color codes and error stream distinction.
-exec > >(tee -a "$MAIN_LOG_FILE") 2> >(tee -a "$MAIN_LOG_FILE" >&2)
+# --- GLOBAL LOGGING REDIRECTION ---
+# The sed command strips ANSI escape codes (colors, cursor movement, etc.)
+# before writing to the log file, ensuring it is clean plain text.
+# The console output from tee remains untouched, preserving colors.
+ansi_stripper_cmd="sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g'"
+
+# Redirect stdout and stderr through tee. One stream goes to the console (raw),
+# the other is piped through the ANSI stripper and appended to the log file.
+exec > >(tee >(eval "$ansi_stripper_cmd" >>"$MAIN_LOG_FILE")) \
+2> >(tee >(eval "$ansi_stripper_cmd" >>"$MAIN_LOG_FILE") >&2)
+
 log_info "Global logging initiated. Full output is being captured in: $MAIN_LOG_FILE"
 
 build_run_from_cli() {
@@ -264,7 +282,7 @@ _systype               # check used uname
 
 if [ -z "$1" ]; then
 	[ "$(cfg_get_value "s3" "DIRECTMENU")" == "1" ] && _dialog_checkout && exit
-	_help
+	ui_show_help
 	exit
 
 else
@@ -308,7 +326,7 @@ else
 					clear
 					s3logo
 					echo -e "$r_l\n  $txt_error: toolchain $txt_parameter $txt_missing\n""$w_l"
-					_help_toolchain
+					ui_show_help_toolchains
 					sleep 2
 					exit
 				else
@@ -334,7 +352,7 @@ else
 					clear
 					s3logo
 					printf "$r_l\n  $txt_error: toolchain $txt_parameter $txt_missing\n""$w_l"
-					_help_toolchain
+					ui_show_help_toolchains
 					printf "$W"
 					sleep 2
 					exit
@@ -346,7 +364,7 @@ else
 					clear
 					s3logo
 					printf "$r_l\n  toolchain missing/error\n$w_l"
-					_help_toolchain
+					ui_show_help_toolchains
 					echo -e "$W"
 					sleep 2
 					exit
@@ -358,7 +376,7 @@ else
 					clear
 					s3logo
 					printf "$r_l\n  $txt_error: toolchain $txt_parameter $txt_missing\n""$w_l"
-					_help_toolchain
+					ui_show_help_toolchains
 					printf "$W"
 					sleep 2
 					exit
@@ -394,7 +412,7 @@ else
 				if [ -n "$2" ]; then
 					for telement in ${INST_TCLIST[@]}; do
 						if [ "$telement" == "$2" ]; then
-							_gtedit "$2"
+							toolchain_edit_confdir_menu "$2"
 							exit
 						fi
 					done
@@ -406,7 +424,7 @@ else
 				;;
 
 			help)
-				_help
+				ui_show_help
 				exit
 				;;
 
@@ -423,6 +441,6 @@ else
 		build_run_from_cli "$@"
 		exit
 	fi
-	_help
+	ui_show_help
 fi
 exit

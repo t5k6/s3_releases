@@ -259,10 +259,15 @@ patch_apply_emu() {
 	cd "${repodir}" || log_fatal "Repository directory not found: ${repodir}" "$EXIT_MISSING"
 
 	# Step 2: Apply the patch
+	# First, try to REVERT any existing patch to ensure a clean state. Ignore errors.
+	log_info "Attempting to revert any existing emu patch..."
+	patch -R -p1 <"$patch_file" >/dev/null 2>&1
+
 	# Using a temporary log for this specific operation
 	local patch_log
 	patch_log=$(mktemp)
-	if ! patch "$strip_level" <"$patch_file" >"$patch_log" 2>&1; then
+	# Use --force and --forward to make the patch non-interactive and robust
+	if ! patch --force --forward "$strip_level" <"$patch_file" >"$patch_log" 2>&1; then
 		log_error "Failed to apply emu patch. See details below:"
 		cat "$patch_log" # Show the raw patch error to the user
 		rm -f "$patch_log"

@@ -20,9 +20,7 @@ cedit() {
 	ui_edit_s3_config
 	bye
 }
-counter() {
-	COUNT="$((COUNT + 1))"
-}
+
 timer_calc() {
 	Tcalc="$((Te - Ts))"
 }
@@ -32,20 +30,24 @@ timer_stop() {
 timer_start() {
 	Ts="$(date +%s)"
 }
-decode() {
-	# Decodes a base64 string. Returns non-zero if input is empty or invalid.
-	[[ -n "$1" ]] && printf "%s" "$1" | base64 -d 2>/dev/null
+util_decode_base64() {
+	local input="$1"
+	if [[ -z "$input" ]]; then
+		log_error "util_decode_base64 was called with an empty string."
+		return 1
+	fi
+
+	# The `-d` flag is not portable, `--decode` is.
+	if ! decoded_val=$(printf "%s" "$input" | base64 --decode 2>/dev/null); then
+		log_error "Failed to decode a base64 string. The string may be corrupt."
+		return 1
+	fi
+	printf "%s" "$decoded_val"
 }
 get_module_name() {
 	printf "${INTERNAL_MODULES[$1]}"
 }
 
-_wait() {
-	printf "$w_l\n"
-	read -n1 -r -p "  $txt_help3" key
-	tput cuu1
-	printf '                                          '
-}
 _systype() {
 	systype="bad"
 	case "$(uname -m)" in
@@ -57,41 +59,51 @@ _systype() {
 
 _generate_oscam_name() {
 	cd "${repodir}"
-	_dvbapi=$(
-		[ "$(./config.sh --enabled HAVE_DVBAPI)" == Y ] && echo -dvbapi || printf ''
-	)
-	_dvbapi=$(
-		[ "$(./config.sh --enabled CARDREADER_GXAPI)" == Y ] && echo -gxapi || echo -n $_dvbapi
-	)
-	_webif=$(
-		[ "$(./config.sh --enabled WEBIF)" == Y ] && echo -webif || printf ''
-	)
-	_ssl=$(
-		[ "$(./config.sh --enabled WITH_SSL)" == Y ] && echo -ssl || printf ''
-	)
-	_emu=$(
-		[ "$(./config.sh --enabled WITH_EMU)" == Y ] && echo -emu || printf ''
-	)
-	_neon=$(
-		[ "$(./config.sh --enabled WITH_ARM_NEON)" == Y ] && "$tcdir/$_toolchainname/bin/$_compiler""gcc" -dumpmachine 2>/dev/null | grep -i -E '(arm|aarch64)' &>/dev/null && echo -neon || printf ''
-	)
-	_icam=$(
-		[ "$(./config.sh --enabled MODULE_STREAMRELAY)" == Y ] && echo -icam || printf ''
-	)
-	_ipv6=$(
-		[ "$(./config.sh --enabled IPV6SUPPORT)" == Y ] && echo -ipv6 || printf ''
-	)
-	_signed=$(
-		[ "$(./config.sh --enabled WITH_SIGNING)" == Y ] && echo -signed || printf ''
-	)
+	# Read toolchain config from UCM
+	local _toolchainname
+	_toolchainname=$(cfg_get_value "toolchain" "_toolchainname")
+	local _compiler
+	_compiler=$(cfg_get_value "toolchain" "_compiler")
+
+	local enabled_modules
+	enabled_modules=$("${repodir}/config.sh" -s)
+
+	local _dvbapi=""
+	[[ " ${enabled_modules} " =~ " HAVE_DVBAPI " ]] && _dvbapi="-dvbapi"
+	[[ " ${enabled_modules} " =~ " CARDREADER_GXAPI " ]] && _dvbapi="-gxapi"
+
+	local _webif=""
+	[[ " ${enabled_modules} " =~ " WEBIF " ]] && _webif="-webif"
+
+	local _ssl=""
+	[[ " ${enabled_modules} " =~ " WITH_SSL " ]] && _ssl="-ssl"
+
+	local _emu=""
+	[[ " ${enabled_modules} " =~ " WITH_EMU " ]] && _emu="-emu"
+
+	local _neon=""
+	if [[ " ${enabled_modules} " =~ " WITH_ARM_NEON " ]]; then
+		"$tcdir/$_toolchainname/bin/$_compiler""gcc" -dumpmachine 2>/dev/null | grep -q -iE '(arm|aarch64)' && _neon="-neon"
+	fi
+
+	local _icam=""
+	[[ " ${enabled_modules} " =~ " MODULE_STREAMRELAY " ]] && _icam="-icam"
+
+	local _ipv6=""
+	[[ " ${enabled_modules} " =~ " IPV6SUPPORT " ]] && _ipv6="-ipv6"
+
+	local _signed=""
+	[[ " ${enabled_modules} " =~ " WITH_SIGNING " ]] && _signed="-signed"
+
 	[ "${USE_vars[USE_COMPRESS]}" == "USE_COMPRESS=1" ] && _upx="-upx" || _upx=''
-	[ "$1" == "native" ] && _b_name="$(uname -s)-$(uname -m)" || _b_name="$1"
+	[ "$_toolchainname" == "native" ] && _b_name="$(uname -s)-$(uname -m)" || _b_name="$_toolchainname"
 	if [ "${s3cfg_vars[ADD_PROFILE_NAME]}" == "0" ] || [ $pf_name == "not_set" ]; then
 		oscam_name="oscam-${REPO}$(REVISION)$($(USEGIT) && printf "@$(COMMIT)" || printf "")-$_b_name$_webif$_dvbapi$_ssl$_usb$_pcsc$_dvbcsa$_stapi$_stapi5$_emu$_ipv6$_icam$_neon$2$_upx$_signed"
 	else
 		oscam_name="oscam-${REPO}$(REVISION)$($(USEGIT) && printf "@$(COMMIT)" || printf "")-${pf_name%.*}"
 	fi
 }
+
 e_readers() {
 	silent=$("${repodir}/config.sh" -s readers)
 	echo ${silent//READER_/}
@@ -149,7 +161,6 @@ _sz() {
 		fi
 	fi
 }
-
 build_ensure_openssl() {
 	local sysroot="$1"
 	local toolchain_path="$2" # This is the path to the toolchain's root, e.g. .../toolchains/oe20_armv7
@@ -157,7 +168,7 @@ build_ensure_openssl() {
 	local openssl_version
 	openssl_version=$(cfg_get_value "s3" "S3_OPENSSL_VERSION" "1.1.1w")
 
-	err_push_context "Dependency Check: OpenSSL"
+	err_push_context "build_ensure_openssl"
 
 	if [[ ! -d "$sysroot/usr/include" ]]; then
 		validate_command "Creating include directory in sysroot" mkdir -p "$sysroot/usr/include"
@@ -277,29 +288,31 @@ ui_show_system_config_menu() {
 	err_pop_context
 }
 
-_gtedit() {
+toolchain_edit_confdir_menu() {
 	local toolchain_name="$1"
 	if [ -f "$tccfgdir/$toolchain_name" ]; then
-		# Source the specific toolchain config to get its current values
-		source "$tccfgdir/$toolchain_name"
+		# Use Unified Configuration Manager for secure loading
+		if cfg_load_file "toolchain" "$tccfgdir/$toolchain_name"; then
+			local confdir
+			confdir=$(ui_get_input " -[ $toolchain_name Toolchain$(REPOIDENT) ]- " "Enter new CONF_DIR path. Default is '$(cfg_get_value "toolchain" "_oscamconfdir_default")'." "$(cfg_get_value "toolchain" "_oscamconfdir_custom")")
 
-		local confdir
-		confdir=$(ui_get_input " -[ $toolchain_name Toolchain$(REPOIDENT) ]- " "Enter new CONF_DIR path. Default is '$_oscamconfdir_default'." "$_oscamconfdir_custom")
-
-		case "$?" in
-		0)
-			# If user entered something
-			if [ -n "$confdir" ]; then
-				validate_command "Updating toolchain config" sed -i "s@^_oscamconfdir_custom.*@_oscamconfdir_custom=\"$confdir\"@" "$tccfgdir/$toolchain_name"
-			else # User cleared the input, revert to default
-				validate_command "Updating toolchain config" sed -i "s@^_oscamconfdir_custom.*@_oscamconfdir_custom=\"\"@" "$tccfgdir/$toolchain_name"
-			fi
-			;;
-		*)
-			# ESC or cancel - keep current setting
-			: # Do nothing
-			;;
-		esac
+			case "$?" in
+			0)
+				# If user entered something
+				if [ -n "$confdir" ]; then
+					validate_command "Updating toolchain config" sed -i "s@^_oscamconfdir_custom.*@_oscamconfdir_custom=\"$confdir\"@" "$tccfgdir/$toolchain_name"
+				else # User cleared the input, revert to default
+					validate_command "Updating toolchain config" sed -i "s@^_oscamconfdir_custom.*@_oscamconfdir_custom=\"\"@" "$tccfgdir/$toolchain_name"
+				fi
+				;;
+			*)
+				# ESC or cancel - keep current setting
+				: # Do nothing
+				;;
+			esac
+		else
+			log_warn "Could not load toolchain configuration for '$toolchain_name'"
+		fi
 	fi
 }
 check_smargo() {
@@ -335,10 +348,16 @@ check_signing() {
 	fi
 }
 set_buildtype() {
+	local toolchain_name="$1"
+	local sysroot_path="$2"
 	local statcount=0
 	local libcount=0
 
-	[ "$_toolchainname" == "native" ] && SEARCHDIR="$(ldconfig -v 2>/dev/null | grep -v ^$'\t' | awk -F':' '{print $1}')" || SEARCHDIR="$SYSROOT"
+	if [[ "$toolchain_name" == "native" ]]; then
+		SEARCHDIR="/usr/lib /usr/local/lib /lib /usr/lib/x86_64-linux-gnu /usr/lib/i386-linux-gnu"
+	else
+		SEARCHDIR="$sysroot_path"
+	fi
 
 	# For each potential static library, check if static linking is requested.
 	# If so, increment libcount. Then try to find the .a file and increment statcount on success.
@@ -346,7 +365,7 @@ set_buildtype() {
 	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_LIBCRYPTO]}" == "STATIC_LIBCRYPTO=1" ]]; then
 		((libcount++))
 		local found_lib
-		found_lib=$(find "$SEARCHDIR" -name "libcrypto.a" -type f -print -quit 2>/dev/null)
+		found_lib=$(find $SEARCHDIR -name "libcrypto.a" -type f -print -quit 2>/dev/null)
 		if [[ -n "$found_lib" ]]; then
 			LIBCRYPTO_LIB="LIBCRYPTO_LIB=$found_lib"
 			((statcount++))
@@ -356,7 +375,7 @@ set_buildtype() {
 	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_SSL]}" == "STATIC_SSL=1" ]]; then
 		((libcount++))
 		local found_lib
-		found_lib=$(find "$SEARCHDIR" -name "libssl.a" -type f -print -quit 2>/dev/null)
+		found_lib=$(find $SEARCHDIR -name "libssl.a" -type f -print -quit 2>/dev/null)
 		if [[ -n "$found_lib" ]]; then
 			SSL_LIB="SSL_LIB=$found_lib"
 			((statcount++))
@@ -366,19 +385,19 @@ set_buildtype() {
 	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_LIBUSB]}" == "STATIC_LIBUSB=1" ]]; then
 		((libcount++))
 		local found_lib
-		found_lib=$(find "$SEARCHDIR" -name "libusb-1.0.a" -type f -print -quit 2>/dev/null)
+		found_lib=$(find $SEARCHDIR -name "libusb-1.0.a" -type f -print -quit 2>/dev/null)
 		if [[ -n "$found_lib" ]]; then
 			LIBUSB_LIB="LIBUSB_LIB=$found_lib"
 			((statcount++))
 		fi
-	elif [[ "$_androidndkdir" == "1" ]]; then
+	elif [[ "$(cfg_get_value "toolchain" "_androidndkdir")" == "1" ]]; then
 		LIBUSB_LIB="LIBUSB_LIB=-lusb-1.0"
 	fi
 
 	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_PCSC]}" == "STATIC_PCSC=1" ]]; then
 		((libcount++))
 		local found_lib
-		found_lib=$(find "$SEARCHDIR" -name "libpcsclite.a" -type f -print -quit 2>/dev/null)
+		found_lib=$(find $SEARCHDIR -name "libpcsclite.a" -type f -print -quit 2>/dev/null)
 		if [[ -n "$found_lib" ]]; then
 			PCSC_LIB="PCSC_LIB=$found_lib"
 			((statcount++))
@@ -388,7 +407,7 @@ set_buildtype() {
 	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_LIBDVBCSA]}" == "STATIC_LIBDVBCSA=1" ]]; then
 		((libcount++))
 		local found_lib
-		found_lib=$(find "$SEARCHDIR" -name "libdvbcsa.a" -type f -print -quit 2>/dev/null)
+		found_lib=$(find $SEARCHDIR -name "libdvbcsa.a" -type f -print -quit 2>/dev/null)
 		if [[ -n "$found_lib" ]]; then
 			LIBDVBCSA_LIB="LIBDVBCSA_LIB=$found_lib"
 			((statcount++))
@@ -407,7 +426,7 @@ set_buildtype() {
 		buildtype=""
 	fi
 }
-_reset_config() {
+build_reset_config() {
 	if [ -f "${repodir}/config.sh" ]; then
 		[ -f "$menudir/$_toolchainname.save" ] && rm -rf "$menudir/$_toolchainname.save"
 		if [ ! -f "$ispatched" ]; then
@@ -518,7 +537,7 @@ ui_select_openssl_version_menu() {
 	err_pop_context
 	return 0
 }
-_stapi_select() {
+ui_show_stapi_menu() {
 	if [[ "$stapi_allowed" != "1" ]]; then
 		ui_show_msgbox "STAPI Info" "STAPI is not available for the '$_toolchainname' toolchain."
 		return
@@ -537,8 +556,8 @@ _stapi_select() {
 
 		stapivar=''
 		addstapi=
-		usevars=$(echo $usevars | sed "s@USE_STAPI5@@" | xargs)
-		usevars=$(echo $usevars | sed "s@USE_STAPI@@" | xargs)
+		usevars=$(echo "$usevars" | sed "s@USE_STAPI5@@" | xargs)
+		usevars=$(echo "$usevars" | sed "s@USE_STAPI@@" | xargs)
 
 		case "$selection" in
 		STAPI_OFF) stapivar= ;;
@@ -612,7 +631,7 @@ load_config() {
 			[ "$e" == "USE_LIBUSB" ] && silent=$("${repodir}/config.sh" --enable CARDREADER_SMARGO)
 		done
 	else
-		_reset_config
+		build_reset_config
 		[ "${s3cfg_vars[USE_TARGZ]}" == "1" ] && USE_vars[USE_TARGZ]="USE_TARGZ=1"
 		for e in $default_use; do
 			USE_vars[$e]="$e=1"
@@ -673,4 +692,83 @@ version() {
 }
 tcupdate() {
 	plugin_run_toolchain_updater "$1" "$2" "$3" "$4"
+}
+
+sys_initialize_environment() {
+	err_push_context "System Initialization"
+	log_info "Setting up SimpleBuild3 directory structure..."
+
+	# Create essential directories
+	if ! validate_command "Creating native toolchain bin directory" mkdir -p "$tcdir/native/bin"; then
+		log_fatal "Failed to create essential directories. Check permissions." "$EXIT_PERMISSION"
+	fi
+	if ! validate_command "Creating support directories" mkdir -p "$sdir"/{archive,binaries,downloads,software,logs,patches,backup_repo,menu_save}; then
+		log_fatal "Failed to create support directories." "$EXIT_PERMISSION"
+	fi
+
+	# Remove placeholder patch file if it exists
+	[ -f "$sdir/patches/no.patch" ] && rm -f "$sdir/patches/no.patch"
+
+	# Handle deprecated directory migrations
+	log_info "Checking for deprecated backup directories..."
+	for migdir in backup_svn backup_git; do
+		if [[ -d "$sdir/$migdir" ]]; then
+			log_info "Migrating deprecated '$migdir' directory..."
+
+			shopt -s dotglob
+			if ! validate_command "Moving contents from $migdir to backup_repo" mv -f "$sdir/$migdir"/* "$brepo/"; then
+				log_error "Migration step failed, continuing..."
+			fi
+			shopt -u dotglob
+
+			local last_archive="$brepo/last${migdir: -3}.tar.gz"
+			if [[ -e "$brepo/last.tar.gz" ]]; then
+				if ! validate_command "Renaming migrated archive" mv "$brepo/last.tar.gz" "$last_archive"; then
+					log_error "Archive rename failed, continuing..."
+				fi
+			fi
+
+			if [[ -L "$last_archive" ]]; then
+				local target
+				target=$(readlink "$last_archive" | awk -F'/' '{print $NF}')
+				if ! validate_command "Creating relative symlink" ln -fs "$target" "$brepo/last${migdir: -3}.tar.gz"; then
+					log_error "Symlink creation failed, continuing..."
+				fi
+			fi
+
+			validate_command "Removing old migration directory" rmdir "$sdir/$migdir"
+		fi
+	done
+
+	# Verify logs directory exists before creating symlinks
+	if [[ ! -d "$ldir" ]]; then
+		log_fatal "Logs directory creation failed." "$EXIT_PERMISSION"
+	fi
+
+	# Create symlinks if they don't exist
+	local links=(
+		"$ldir:$workdir/logs"
+		"$adir:$workdir/archive"
+		"$pdir:$workdir/patches"
+		"$bdir:$workdir/binaries"
+		"$sodir:$workdir/software"
+		"$profdir:$workdir/profiles"
+	)
+
+	for link_spec in "${links[@]}"; do
+		IFS=':' read -r target link <<<"$link_spec"
+		if [[ ! -L "$link" ]]; then
+			if ! validate_command "Creating symlink for $(basename "$target")" ln -frs "$target" "$link"; then
+				log_error "Failed to create symlink: $link -> $target"
+			fi
+		fi
+	done
+
+	# Load default repository URLs securely
+	log_info "Loading default repository URLs."
+	if ! cfg_load_file "urls" "$configdir/urls"; then
+		log_fatal "Could not load core URL configuration from '$configdir/urls'." "$EXIT_INVALID_CONFIG"
+	fi
+
+	err_pop_context
 }

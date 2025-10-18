@@ -1,44 +1,86 @@
 #!/bin/bash
 
 _update_me_logic() {
+	err_push_context "s3 Self-Update Logic"
+
 	cd $workdir
 	GIT_OPT='-c color.ui=always --no-pager'
+
+	log_info "Determining current git branch..."
+	if ! validate_command "Getting current branch" git branch | tail -n1 | tr -d ' *'; then
+		log_error "Could not determine current branch. Aborting update."
+		err_pop_context
+		return 1
+	fi
 	GIT_BRANCH="$(git branch | tail -n1 | tr -d ' *')"
-	git $GIT_OPT fetch --prune
+
+	log_info "Fetching latest changes from remote..."
+	if ! validate_command "Fetching from remote" git $GIT_OPT fetch --prune; then
+		log_error "Failed to fetch from remote. Check network connection."
+		err_pop_context
+		return 1
+	fi
+
+	log_info "Checking for local and remote differences..."
 	ahead=$(git rev-list origin/$GIT_BRANCH..HEAD --count) #local commits made or forced pushes on remote branch
 	behind=$(git rev-list HEAD..origin/$GIT_BRANCH --count)
 	local_revision=$(git rev-list HEAD --count)
 	local_commit=$(git --no-pager log HEAD -n1 --oneline)
 	online_revision=$(git rev-list origin/$GIT_BRANCH --count)
 	online_commit=$(git --no-pager log origin/$GIT_BRANCH -n1 --oneline)
+
 	if [ $behind -eq 0 -a $ahead -eq 0 ]; then
-		printf "${p_l}STATUS: s3 is up to date${re_}\n Local = Online revision $local_revision: $local_commit\n\n"
+		log_info "s3 is already up to date (revision $local_revision)"
 	else
-		git $GIT_OPT status
-		printf "\n${p_l}START: s3 updates pending${re_}\n  Local revision $local_revision: $local_commit\n Online revision $online_revision: $online_commit\n\n"
-		git $GIT_OPT log HEAD..origin/$GIT_BRANCH --oneline
-		sleep 1
+		log_info "Updates available. Local: $local_revision, Remote: $online_revision"
 
 		if [ $ahead -gt 0 ]; then
-			printf "\n${p_l}STAGE 1: Try pull with reset (forced pushes on remote branch)...${re_}\n\n"
-			git reset origin/$GIT_BRANCH --hard
+			log_info "Attempting reset to handle forced pushes..."
+			if ! validate_command "Hard resetting to origin/$GIT_BRANCH" git reset origin/$GIT_BRANCH --hard; then
+				log_error "Could not perform hard reset. You may have local changes that are difficult to resolve."
+				log_info "Consider running 'git status' and resolving conflicts manually."
+				err_pop_context
+				return 1
+			fi
 		else
-			printf "\n${p_l}STAGE 1: Try simple pull (auto-merge)...${re_}\n\n"
+			log_info "Starting standard pull process..."
 		fi
 
-		if ! git $GIT_OPT pull; then
-			printf "\n${p_l}STAGE 2: Reset conflicting tracked files/folders...${re_}\n\n"
-			if ! git $GIT_OPT pull |& grep '^[[:blank:]]' | xargs git checkout; then
-				printf "\n${p_l}STAGE 3: Stash conflicting tracked files/folders...${re_}\n\n"
-				git $GIT_OPT stash
-				printf "\n${p_l}STAGE 4: Remove conflicting untracked files/folders...${re_}\n\n"
-				git $GIT_OPT pull |& grep '^[[:blank:]]' | xargs rm -rf
+		log_info "Attempting to pull latest changes..."
+		if ! validate_command "Pulling changes from origin" git $GIT_OPT pull; then
+			log_warn "Standard pull failed. This can happen due to local modifications."
+			log_info "Attempting to resolve conflicts automatically..."
+
+			# Try to resolve by checking out conflicting files
+			if git $GIT_OPT pull 2>&1 | grep -q '^ '; then
+				log_info "Resetting conflicting tracked files..."
+				if ! git $GIT_OPT pull 2>&1 | grep '^ ' | xargs git checkout; then
+					log_warn "Checkout failed. Stashing conflicting tracked files..."
+					if ! validate_command "Stashing tracked files" git $GIT_OPT stash; then
+						log_error "Could not stash files. Manual intervention required."
+						err_pop_context
+						return 1
+					fi
+					log_info "Removing conflicting untracked files..."
+					git $GIT_OPT pull 2>&1 | grep '^ ' | xargs rm -rf
+				fi
 			fi
-			git $GIT_OPT pull
-			git $GIT_OPT stash clear
+
+			if ! validate_command "Final pull after conflict resolution" git $GIT_OPT pull; then
+				log_error "Update failed after multiple attempts."
+				log_info "Cleaning up stash and recommending manual update."
+				validate_command "Clearing stash" git $GIT_OPT stash clear
+				err_pop_context
+				return 1
+			fi
+
+			validate_command "Clearing temporary stash" git $GIT_OPT stash clear
 		fi
-		printf "\n${p_l}UPDATE finished.${re_}\n\n"
+
+		log_info "s3 update completed successfully."
 	fi
+
+	err_pop_context
 }
 
 sys_update_self() {
