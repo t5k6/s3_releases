@@ -90,11 +90,6 @@ repo_update() {
 	fi
 }
 
-repo_restore_quick() {
-	printf "$1 \n"
-	file_extract_archive $1
-}
-
 repo_get_revision() {
 	if [ -d "${repodir}" ]; then
 		(

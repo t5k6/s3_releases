@@ -36,10 +36,19 @@ cfg_load_file() {
 		key="${line%%=*}"
 		value="${line#*=}"
 
-		# Sanitize key and value
+		# Sanitize key
 		key=$(echo "$key" | awk '{$1=$1};1') # Trim whitespace
-		value="${value#\"}"
-		value="${value%\"}" # Strip leading/trailing quotes
+
+		# Sanitize value: Trim whitespace, then remove an optional trailing semicolon,
+		# then remove surrounding quotes. This is more robust for legacy .cfg files.
+		value="${value#"${value%%[![:space:]]*}"}" # Trim leading whitespace
+		value="${value%"${value##*[![:space:]]}"}" # Trim trailing whitespace
+		if [[ "${value: -1}" == ';' ]]; then
+			value="${value:0:${#value}-1}"
+		fi
+		if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+			value="${value:1:${#value}-2}"
+		fi
 
 		S3_CONFIGS["${namespace}:${key}"]="$value"
 

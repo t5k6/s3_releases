@@ -262,7 +262,7 @@ patch_apply_emu() {
 	# Using a temporary log for this specific operation
 	local patch_log
 	patch_log=$(mktemp)
-	if ! patch "$strip_level" -p"$strip_level" <"$patch_file" >"$patch_log" 2>&1; then
+	if ! patch "$strip_level" <"$patch_file" >"$patch_log" 2>&1; then
 		log_error "Failed to apply emu patch. See details below:"
 		cat "$patch_log" # Show the raw patch error to the user
 		rm -f "$patch_log"

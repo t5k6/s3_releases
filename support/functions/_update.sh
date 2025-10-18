@@ -90,5 +90,5 @@ sys_repair_self() {
 	s3local="$dldir/s3_github"
 
 	[ -d "$s3local" ] && rm -rf $s3local
-	update_me
+	sys_update_self
 }

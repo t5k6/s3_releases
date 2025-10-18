@@ -257,16 +257,48 @@ net_get_openssl_checksum() {
 		return 1
 	fi
 
-	# The file format is simple: "SHA256(archive_name)= hash"
+	# Use grep to extract the 64-character hex hash, which is
+	# format-agnostic and works for both old and new checksum file styles.
 	local hash
-	hash=$(awk '{print $NF}' "$checksum_file")
+	hash=$(grep -oE '[0-9a-f]{64}' "$checksum_file")
 	rm -f "$checksum_file"
 
-	if [[ -n "$hash" ]]; then
+	# Validation to ensure we got a real hash, not HTML from a 404 page.
+	if [[ "$hash" =~ ^[0-9a-f]{64}$ ]]; then
 		echo "$hash"
 		return 0
 	else
-		log_warn "Could not parse checksum from $checksum_url."
+		log_error "Could not parse a valid SHA256 hash from '$checksum_url'. The file may not exist or the format is unexpected."
 		return 1
 	fi
+}
+
+# Fetches a sorted list of stable OpenSSL release versions from the official git repo.
+# Caches the result in a temp file to avoid repeated network calls.
+net_get_openssl_versions() {
+	local cache_file="/tmp/s3_openssl_versions_cache"
+	# Use cache if it's less than a day old to be a good network citizen
+	if [[ -f "$cache_file" && -n "$(find "$cache_file" -mtime -1)" ]]; then
+		cat "$cache_file"
+		return 0
+	fi
+
+	log_info "Fetching available OpenSSL versions from git..."
+	local openssl_git_url="https://github.com/openssl/openssl.git"
+
+	# Use git ls-remote to get all tags without cloning the repo.
+	# Sort by version number descending.
+	# Filter for stable 1.1.1 series (e.g., openssl-1.1.1w) and 3.x series (e.g., openssl-3.0.13)
+	# Use awk to clean up the tag name.
+	git ls-remote --tags --sort=-v:refname "$openssl_git_url" |
+		grep -E 'refs/tags/openssl-(1\.1\.1[a-z]$|[3-9]+\.[0-9]+\.[0-9]+$)' |
+		awk -F'/' '{print $3}' |
+		sed 's/^openssl-//' >"$cache_file"
+
+	if [[ ! -s "$cache_file" ]]; then
+		log_error "Could not retrieve OpenSSL versions. Check network or git installation."
+		return 1
+	fi
+
+	cat "$cache_file"
 }

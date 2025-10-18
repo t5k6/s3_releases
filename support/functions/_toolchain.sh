@@ -127,9 +127,10 @@ ui_show_module_selection_menu() {
 ui_show_config_menu() {
 	menu_init "Configuration for '$_toolchainname'"
 	menu_add_option "MODULES" "OScam Modules (Addons, Protocols, Readers)..."
-	menu_add_option "FEATURES" "OScam Features (STAPI, PCSC, IPv6, etc.)..."
+	menu_add_option "FEATURES" "OScam Core Features (DVBAPI, WebIF, SSL, etc.)..."
+	menu_add_option "READERS" "Hardware Reader Features (PCSC, STAPI, etc.)..."
 	menu_add_option "EMU" "EMU & SoftCam Settings..."
-	menu_add_option "BUILD_OPTS" "Build Process Options (Static, Debug, etc.)..."
+	menu_add_option "BUILD_OPTS" "Build Process Options (Static, Verbose, etc.)..."
 	menu_add_separator
 	menu_add_option "RESET" "Reset Configuration to Defaults"
 	menu_add_option "BACK" "Back to Build Menu"
@@ -144,13 +145,10 @@ ui_show_config_menu() {
 			ui_show_module_selection_menu
 			cfg_save_build_profile
 			;;
-		FEATURES)
-			_oscam_extra_menu
-			;;
-		EMU) ui_show_emu_menu ;; # This is the new function
-		BUILD_OPTS)
-			_build_extra_menu
-			;;
+		FEATURES) _ui_show_core_features_menu ;;
+		READERS) _ui_show_reader_features_menu ;;
+		EMU) ui_show_emu_menu ;;
+		BUILD_OPTS) _ui_show_build_options_menu ;;
 		RESET)
 			_reset_config
 			load_config
@@ -248,13 +246,19 @@ ui_show_toolchain_selection_menu() {
 }
 
 _load_toolchain() {
-	[ ! -z "$1" ] && source "$tccfgdir/$1"
+	local toolchain_name="$1"
+	err_push_context "Load toolchain '$toolchain_name'"
+
+	if ! cfg_load_file "toolchain" "$tccfgdir/$toolchain_name" "true"; then
+		log_fatal "Failed to load configuration for toolchain '$toolchain_name'." "$EXIT_INVALID_CONFIG"
+	fi
+
 	local dln="$(basename "$(decode "$_toolchainfilename")")"
 	local tc_dl="$dldir/$dln"
 	local url="$(decode "$_toolchainfilename")"
 
 	clear
-	slogo # Use a standard logo
+	slogo
 	ologo
 	log_header "Loading Toolchain: $dln"
 
@@ -263,6 +267,7 @@ _load_toolchain() {
 	fi
 
 	log_info "Toolchain '$dln' downloaded successfully."
+	err_pop_context
 }
 
 # New private helper function for consistent toolchain extraction
@@ -705,33 +710,23 @@ ui_show_emu_menu() {
 		fi
 
 		menu_init "EMU & SoftCam Settings"
-		menu_add_option "TOGGLE_EMU" "Enable WITH_EMU in OScam config" "$emu_state"
-		menu_add_separator
 		menu_add_option "PATCH" "Download & Apply latest oscam-emu.patch"
 		menu_add_option "SOFTCAM" "Download latest SoftCam.Key"
 		menu_add_separator
-		menu_add_option "BACK" "Back to Configuration Menu"
+		menu_add_option "BACK" "Back"
+		menu_add_option "EXIT" "Exit SimpleBuild"
 
-		if menu_show_checkbox; then # Using checkbox to allow toggling the EMU state
+		if menu_show_list; then
 			local selection
-			selection=($(menu_get_selected_options))
-			local action
-			action="${selection[0]}" # Get the first (and likely only) action selected
-
-			case "$action" in
-			TOGGLE_EMU)
-				if [[ "$emu_state" == "on" ]]; then
-					validate_command "Disabling WITH_EMU" "${repodir}/config.sh" --disable WITH_EMU
-				else
-					validate_command "Enabling WITH_EMU" "${repodir}/config.sh" --enable WITH_EMU
-				fi
-				;;
+			selection="$(menu_get_first_selection)"
+			case "$selection" in
 			PATCH)
 				if patch_apply_emu; then
 					ui_show_msgbox "Success" "EMU Patch applied and module enabled."
 				else
 					ui_show_msgbox "Error" "Failed to apply EMU patch. Please check the logs."
 				fi
+				# After action, loop back to this menu
 				;;
 			SOFTCAM)
 				# Download to the binaries directory for easy access after build
@@ -740,9 +735,13 @@ ui_show_emu_menu() {
 				else
 					ui_show_msgbox "Error" "Failed to download SoftCam.Key."
 				fi
+				# After action, loop back to this menu
 				;;
 			BACK)
-				return 0
+				return 0 # Exit this function to go back to the previous menu
+				;;
+			EXIT)
+				bye # Exit the whole application
 				;;
 			esac
 		else
@@ -751,14 +750,100 @@ ui_show_emu_menu() {
 	done
 }
 
-cfg_load_toolchain_config() {
-	local toolchain_name="$1"
-	local config_path="$tccfgdir/$toolchain_name"
-	if [[ -f "$config_path" ]]; then
-		source "$config_path"
-		return 0
-	else
-		log_error "Toolchain config not found: $config_path"
-		return 1
+_ui_show_core_features_menu() {
+	local options=("USE_DVBAPI" "USE_WEBIF" "USE_IPV6SUPPORT" "USE_SSL" "WITH_EMU" "MODULE_STREAMRELAY")
+	menu_init "OScam Core Features"
+
+	for opt in "${options[@]}"; do
+		local state="off"
+		# Special check for WITH_EMU as it's not a USE_var
+		if [[ "$opt" == "WITH_EMU" ]]; then
+			[[ "$("${repodir}/config.sh" --enabled WITH_EMU)" == "Y" ]] && state="on"
+		elif [[ "$opt" == "MODULE_STREAMRELAY" ]]; then
+			[[ "$("${repodir}/config.sh" --enabled MODULE_STREAMRELAY)" == "Y" ]] && state="on"
+		else
+			[[ "${#USE_vars[$opt]}" -gt 4 ]] && state="on"
+		fi
+		menu_add_option "$opt" "Enable $opt" "$state"
+	done
+
+	if menu_show_checkbox; then
+		local selections=($(menu_get_selected_options))
+		for opt in "${options[@]}"; do
+			if [[ " ${selections[*]} " =~ " ${opt} " ]]; then
+				if [[ "$opt" == "WITH_EMU" ]]; then
+					validate_command "Enabling WITH_EMU" "${repodir}/config.sh" --enable WITH_EMU
+				elif [[ "$opt" == "MODULE_STREAMRELAY" ]]; then
+					validate_command "Enabling MODULE_STREAMRELAY" "${repodir}/config.sh" --enable MODULE_STREAMRELAY
+				else
+					USE_vars[$opt]="$opt=1"
+				fi
+			else
+				if [[ "$opt" == "WITH_EMU" ]]; then
+					validate_command "Disabling WITH_EMU" "${repodir}/config.sh" --disable WITH_EMU
+				elif [[ "$opt" == "MODULE_STREAMRELAY" ]]; then
+					validate_command "Disabling MODULE_STREAMRELAY" "${repodir}/config.sh" --disable MODULE_STREAMRELAY
+				else
+					USE_vars[$opt]=""
+				fi
+			fi
+		done
+		cfg_save_build_profile
+		# After saving, immediately re-run the dependency check to update the USE_vars state
+		build_check_streamrelay_deps
+	fi
+}
+
+_ui_show_reader_features_menu() {
+	# For this menu, we will keep it simple. More complex logic can be added later.
+	local options=("USE_PCSC" "USE_LIBUSB")
+	menu_init "Hardware Reader Features"
+
+	for opt in "${options[@]}"; do
+		local state="off"
+		[[ "${#USE_vars[$opt]}" -gt 4 ]] && state="on"
+		menu_add_option "$opt" "Enable $opt" "$state"
+	done
+
+	# STAPI needs its own special menu due to multiple options
+	menu_add_separator
+	menu_add_option "STAPI_CONFIG" "Configure STAPI / STAPI5..."
+
+	if menu_show_checkbox; then
+		local selections=($(menu_get_selected_options))
+		for opt in "${options[@]}"; do
+			if [[ " ${selections[*]} " =~ " ${opt} " ]]; then
+				USE_vars[$opt]="$opt=1"
+			else
+				USE_vars[$opt]=""
+			fi
+		done
+
+		if [[ " ${selections[*]} " =~ " STAPI_CONFIG " ]]; then
+			_stapi_select
+		fi
+		cfg_save_build_profile
+	fi
+}
+
+_ui_show_build_options_menu() {
+	local options=("USE_STATIC" "STATIC_LIBCRYPTO" "STATIC_SSL" "STATIC_LIBUSB" "STATIC_PCSC" "STATIC_LIBDVBCSA" "USE_TARGZ" "USE_VERBOSE" "USE_DIAG" "USE_PATCH" "USE_EXTRA" "USE_CONFDIR" "USE_OSCAMNAME")
+	menu_init "Build Process Options"
+
+	for opt in "${options[@]}"; do
+		local state="off"
+		[[ "${#USE_vars[$opt]}" -gt 4 ]] && state="on"
+		menu_add_option "$opt" "Enable $opt" "$state"
+	done
+
+	if menu_show_checkbox; then
+		local selections=($(menu_get_selected_options))
+		# Reset all managed options first
+		for opt in "${options[@]}"; do USE_vars[$opt]=""; done
+		# Then enable the selected ones
+		for opt in "${selections[@]}"; do
+			USE_vars[$opt]="$opt=1"
+		done
+		cfg_save_build_profile
 	fi
 }

@@ -135,14 +135,9 @@ menu_show_list() {
 # ------------------------------------------------------------------------------
 
 menu_get_selected_options() {
-	# Get selected options as array
+	# Safely parse dialog's output into an array. This correctly handles items with spaces.
 	local selected=()
-	local option
-
-	for option in $_MENU_SELECTED_OPTION; do
-		selected+=("$(echo "$option" | sed 's/^"\(.*\)"$/\1/')")
-	done
-
+	eval "selected=($_MENU_SELECTED_OPTION)"
 	echo "${selected[@]}"
 }
 
