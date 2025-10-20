@@ -16,13 +16,29 @@ patch_download_emu() {
 	log_header "Downloading oscam-emu patch"
 	log_info "Checking for the latest oscam-emu patch..."
 
-	if ! net_check_url "$URL_OSCAM_EMU_PATCH"; then
+	# Load URLs config to get the patch URL
+	if ! cfg_load_file "urls" "$configdir/urls"; then
+		log_error "Failed to load URLs configuration."
+		err_pop_context
+		return 1
+	fi
+
+	local patch_url
+	patch_url=$(cfg_get_value "urls" "URL_OSCAM_EMU_PATCH")
+
+	if [[ -z "$patch_url" ]]; then
+		log_error "URL_OSCAM_EMU_PATCH not found in URLs configuration."
+		err_pop_context
+		return 1
+	fi
+
+	if ! net_check_url "$patch_url"; then
 		log_warn "Could not reach oscam-emu patch URL. Skipping download."
 		err_pop_context
 		return 1
 	fi
 
-	if validate_command "Downloading emu patch" net_download_file "$URL_OSCAM_EMU_PATCH" "$dest_file"; then
+	if validate_command "Downloading emu patch" net_download_file "$patch_url" "$dest_file"; then
 		log_info "Successfully downloaded latest 'oscam-emu.patch'."
 	else
 		log_error "Failed to download 'oscam-emu.patch'. Patching will continue with existing files."
@@ -150,13 +166,13 @@ patch_apply_console() {
 		local patch_cmd
 		if grep -q 'GIT binary patch' "$patch_path"; then
 			log_debug "Binary patch detected, using 'git apply'."
-			patch_cmd=("git" "apply" "--verbose" "$strip_level")
+			patch_cmd=("git" "apply" "--verbose" "$strip_level" "$patch_path")
 		else
-			patch_cmd=("patch" "-f" "$strip_level")
+			patch_cmd=("patch" "-f" "$strip_level" "-i" "$patch_path")
 		fi
 
 		# Apply the patch, capturing output to a log and checking the result
-		if run_with_logging "$patchlog_file" "${patch_cmd[@]}" <"$patch_path"; then
+		if run_with_logging "$patchlog_file" "${patch_cmd[@]}"; then
 			log_info "Successfully applied '$patch_file'."
 		else
 			# patch returns 1 for successful application with "fuzz" (hunks), which is a warning.
@@ -167,7 +183,7 @@ patch_apply_console() {
 			else
 				log_error "Failed to apply patch '$patch_file' (exit code: $patch_exit_code). See log: $patchlog_file"
 				log_header "Restoring repository due to patch failure"
-				if validate_command "Restoring last good repo state" repo_restore "last-${REPO}${ID}"; then
+				if validate_command "Restoring last good repo state" repo_restore "last"; then
 					log_info "Repository restored."
 				else
 					log_error "Could not restore repository. Workspace may be in a broken state."
@@ -244,39 +260,102 @@ patch_apply_emu() {
 	err_push_context "Apply oscam-emu patch"
 	log_header "Applying oscam-emu patch"
 
-	# Step 1: Download the patch first
-	if ! patch_download_emu; then
-		# The download function already logs errors, so we just exit the context.
+	# --- Offer to use local patch before downloading ---
+	local patch_file="$pdir/oscam-emu.patch"
+	local should_download=true # Default behavior is to download
+
+	if [[ -f "$patch_file" ]]; then
+		log_info "Local 'oscam-emu.patch' found."
+		if ui_show_yesno "A local patch exists. Use it instead of downloading the latest version?"; then
+			log_info "Proceeding with the existing local patch as requested."
+			should_download=false
+		else
+			log_info "User opted to download a fresh copy. The local patch will be overwritten."
+		fi
+	fi
+
+	if [[ "$should_download" == true ]]; then
+		if ! patch_download_emu; then
+			# If download fails but a local file still exists, offer it as a fallback.
+			if [[ -f "$patch_file" ]]; then
+				log_warn "Download failed. An existing local patch is available."
+				if ! ui_show_yesno "Do you want to try applying the local patch as a fallback?"; then
+					log_error "Aborting patch process."
+					err_pop_context
+					return 1
+				fi
+				log_info "Proceeding with local patch as a fallback."
+			else
+				# This case handles when no local file existed AND the download failed.
+				log_error "Download failed and no local patch is available to use as a fallback."
+				err_pop_context
+				return 1
+			fi
+		fi
+	fi
+
+	if [[ ! -f "$patch_file" ]]; then
+		log_error "oscam-emu.patch not found after download attempt."
 		err_pop_context
 		return 1
 	fi
 
-	local patch_file="$pdir/oscam-emu.patch"
 	local strip_level
 	strip_level=$(_patch_get_strip_level "$patch_file")
 
 	log_info "Applying patch: oscam-emu.patch (strip level: ${strip_level:1})"
 	cd "${repodir}" || log_fatal "Repository directory not found: ${repodir}" "$EXIT_MISSING"
 
-	# Step 2: Apply the patch
-	# First, try to REVERT any existing patch to ensure a clean state. Ignore errors.
-	log_info "Attempting to revert any existing emu patch..."
-	patch -R -p1 <"$patch_file" >/dev/null 2>&1
+	# Step 2: Ensure a clean state by reverting any previous application.
+	# Use -f (force) to avoid errors if the patch isn't already applied.
+	log_info "Attempting to revert any existing emu patch to ensure a clean state..."
+	if patch -f -R "$strip_level" -i "$patch_file" >/dev/null 2>&1; then
+		log_info "Reverted existing emu patch."
+	else
+		log_warn "Could not revert existing emu patch (perhaps not applied yet). Proceeding."
+	fi
 
-	# Using a temporary log for this specific operation
 	local patch_log
 	patch_log=$(mktemp)
-	# Use --force and --forward to make the patch non-interactive and robust
-	if ! patch --force --forward "$strip_level" <"$patch_file" >"$patch_log" 2>&1; then
-		log_error "Failed to apply emu patch. See details below:"
-		cat "$patch_log" # Show the raw patch error to the user
-		rm -f "$patch_log"
+	trap 'rm -f "$patch_log"' RETURN
+
+	# Step 3: Perform a dry run to check for compatibility without modifying files.
+	log_info "Performing a dry run to check patch compatibility..."
+	if ! patch --dry-run --forward "$strip_level" -i "$patch_file" >"$patch_log" 2>&1; then
+		log_error "EMU patch is not compatible with the current repository source."
+		log_error "Dry run failed. See details below:"
+		cat "$patch_log"
+		log_warn "You may need to find an updated version of 'oscam-emu.patch'."
 		err_pop_context
 		return 1
 	fi
-	rm -f "$patch_log"
 
-	# Step 3: Mark repository as patched and enable the module
+	log_info "Dry run successful. Proceeding with actual patch application."
+
+	# Step 4: Apply the patch for real.
+	if ! patch --forward "$strip_level" -i "$patch_file" >>"$patch_log" 2>&1; then
+		local patch_exit_code=$?
+		if [[ "$patch_exit_code" -eq 1 ]]; then
+			log_warn "EMU Patch applied with warnings (fuzz). This is usually safe. See log for details."
+			cat "$patch_log"
+		else
+			log_error "Failed to apply emu patch even after a successful dry run. Exit code: $patch_exit_code"
+			log_error "See details below:"
+			cat "$patch_log"
+
+			log_header "Restoring repository due to patch failure"
+			if ! validate_command "Restoring last good repo state" repo_restore "last"; then
+				log_fatal "Could not restore repository. Workspace may be in a broken state." "$EXIT_ERROR"
+			else
+				log_info "Repository restored to a clean state."
+			fi
+
+			err_pop_context
+			return 1
+		fi
+	fi
+
+	# Step 5: Mark repository as patched and enable the module.
 	_patch_mark_as_patched "oscam-emu.patch"
 	if ! validate_command "Enabling WITH_EMU module" "${repodir}/config.sh" --enable WITH_EMU; then
 		log_warn "Could not automatically enable WITH_EMU module after patching."

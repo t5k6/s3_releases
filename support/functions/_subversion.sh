@@ -44,13 +44,12 @@ repo_checkout_svn() {
 		log_fatal "Checkout failed: 'config.sh' not found in repository." "$EXIT_MISSING"
 	fi
 
-	log_info "Revision:  $y_l$(REVISION) @ $(BRANCH)${mac_:+$w_l$mac_}${w_l}"
+	log_info "Revision:  $y_l$(repo_get_revision) @ $(repo_get_branch)${mac_:+$w_l$mac_}${w_l}"
 	log_info "Local Path: $y_l${repodir}${w_l}"
 
 	validate_command "Resetting config" "${repodir}/config.sh" -R
 	[ -f "$ispatched" ] && rm -f "$ispatched"
 
-	# Use new unified backup function
 	if ! repo_backup; then
 		log_warn "Initial repository backup failed."
 	fi
@@ -86,20 +85,15 @@ repo_update_svn() {
 		log_fatal "Update failed: 'config.sh' not found in repository." "$EXIT_MISSING"
 	fi
 
-	log_info "Revision:  $y_l$(REVISION) @ $(BRANCH)${w_l}"
+	log_info "Revision:  $y_l$(repo_get_revision) @ $(repo_get_branch)${w_l}"
 	log_info "Local Path: $y_l${repodir}${w_l}"
 
 	validate_command "Resetting config" "${repodir}/config.sh" -R
 
-	# Use new unified backup function
 	if ! repo_backup; then
 		log_warn "Repository backup failed after update."
 	fi
 
 	err_pop_context
 	return 0
-}
-
-svnurl() {
-	svn info | sed -ne 's/^URL: //p'
 }

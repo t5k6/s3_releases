@@ -50,8 +50,7 @@ log_fatal() {
 	local message="$1"
 	local exit_code="${2:-$EXIT_ERROR}"
 
-	log_error "FATAL: $message"
-	err_cleanup
+	_log_message "FATAL" "$r_l" "$message"
 	exit "$exit_code"
 }
 
@@ -70,10 +69,12 @@ err_check_command_result() {
 
 err_cleanup() {
 	# Perform cleanup operations
-	local end_time=$(date +%s)
-	local duration=$((end_time - ERR_START_TIME))
-
-	log_debug "Operation '$ERR_CURRENT_OPERATION' completed in ${duration}s with exit code $ERR_LAST_EXIT_CODE"
+	if [[ -n "$ERR_START_TIME" && "$ERR_START_TIME" -gt 0 ]]; then
+		local end_time
+		end_time=$(date +%s)
+		local duration=$((end_time - ERR_START_TIME))
+		log_debug "Operation '$ERR_CURRENT_OPERATION' completed in ${duration}s with exit code $ERR_LAST_EXIT_CODE"
+	fi
 
 	# Remove temporary files starting with our prefixes
 	_cleanup_temp_files
@@ -182,9 +183,7 @@ err_log_and_exit() {
 	local message="$1"
 	local exit_code="${2:-$EXIT_ERROR}"
 
-	log_error "FATAL: $message"
-	err_cleanup
-	exit "$exit_code"
+	log_fatal "$message" "$exit_code"
 }
 
 validate_command() {
@@ -230,41 +229,74 @@ LOG_LEVEL_WARN=2
 LOG_LEVEL_INFO=3
 LOG_LEVEL_DEBUG=4
 
-log_error() {
-	local message="$@"
-	printf "$r_l ERROR: $message$re_\n" >&2
+# Internal log handler. Do not call directly.
+# Writes a clean, timestamped message to the log file and a colored one to the console.
+_log_message() {
+	local level_name="$1"
+	local level_color="$2"
+	shift 2
+	local message="$*"
+	local timestamp
+	timestamp=$(date '+%F %T')
 
-	# Also log to file if available
-	if [ -w "$ldir" ]; then
-		echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: $message" >>"$ldir/error.log"
+	# Write clean, timestamped message to the log file, if it's writable
+	if [[ -n "$MAIN_LOG_FILE" && -w "$(dirname "$MAIN_LOG_FILE")" ]]; then
+		echo "$timestamp [$level_name] $message" >>"$MAIN_LOG_FILE"
 	fi
+
+	# Write colored message to the console. Errors/Warns go to stderr.
+	if [[ "$level_name" == "ERROR" || "$level_name" == "WARN" || "$level_name" == "FATAL" ]]; then
+		printf "%s[%s]%s %s\n" "$level_color" "$level_name" "$re_" "$message" >&2
+	else
+		printf "%s[%s]%s %s\n" "$level_color" "$level_name" "$re_" "$message"
+	fi
+}
+
+log_error() {
+	_log_message "ERROR" "$r_l" "$*"
 }
 
 log_warn() {
 	((S3_LOG_LEVEL < LOG_LEVEL_WARN)) && return
-	local message="$@"
-	printf "$y_l WARNING: $message$re_\n"
+	_log_message "WARN" "$y_l" "$*"
 }
 
 log_info() {
 	((S3_LOG_LEVEL < LOG_LEVEL_INFO)) && return
-	local message="$@"
-	printf "$g_l INFO: $message$re_\n"
+	_log_message "INFO" "$g_l" "$*"
 }
 
 log_header() {
 	local message="$1"
-	local mode="${2:-verbose}"
-	# Respect quiet/silent mode to avoid interfering with command capture
-	if [ "$mode" != "silent" ] && [ "${S3_OUTPUT_MODE:-}" != "silent" ]; then
-		printf "%s" "$b_l\n=== $message ===$w_l\n" >&2
+	local timestamp
+	timestamp=$(date '+%F %T')
+
+	# Log clean version to file
+	if [[ -n "$MAIN_LOG_FILE" && -w "$(dirname "$MAIN_LOG_FILE")" ]]; then
+		echo "$timestamp [HEADER] === $message ===" >>"$MAIN_LOG_FILE"
 	fi
+	# Print colored version to console (stderr to not interfere with command substitution)
+	printf "\n%s=== %s ===%s\n" "$b_l" "$message" "$w_l" >&2
 }
 
 log_debug() {
 	((S3_LOG_LEVEL < LOG_LEVEL_DEBUG)) && return
-	local message="$@"
-	printf "$c_l DEBUG: $message$re_\n"
+	_log_message "DEBUG" "$c_l" "$*"
+}
+
+# Logs a message without a level prefix. Used for formatted tables (e.g., syscheck).
+log_plain() {
+	((S3_LOG_LEVEL < LOG_LEVEL_INFO)) && return
+	local message="$*"
+	local clean_message
+	# Use sed to strip ANSI codes for the log file
+	clean_message=$(echo "$message" | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g')
+
+	if [[ -n "$MAIN_LOG_FILE" && -w "$(dirname "$MAIN_LOG_FILE")" ]]; then
+		echo "         $clean_message" >>"$MAIN_LOG_FILE"
+	fi
+	# Print colored message to stderr
+	printf "%s\n" "$message" >&2
 }
 
 # ------------------------------------------------------------------------------

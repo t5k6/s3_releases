@@ -67,22 +67,22 @@ _build_libdvbcsa() {
 	host_target=$("$cc" -dumpmachine)
 
 	# Run bootstrap first to generate the configure script
-	run_with_logging "$log_file" ./bootstrap
-	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+	if ! { ./bootstrap >>"$log_file" 2>&1; }; then
 		log_fatal "libdvbcsa bootstrap failed. See log: $log_file" "$EXIT_ERROR"
 	fi
 
 	local -a config_args=("--prefix=/usr" "--host=$host_target" "CFLAGS=--sysroot=$final_sysroot" "LDFLAGS=--sysroot=$final_sysroot")
-	run_with_logging "$log_file" ./configure "${config_args[@]}"
-	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+	if ! { ./configure "${config_args[@]}" >>"$log_file" 2>&1; }; then
 		log_fatal "libdvbcsa configuration failed. See log: $log_file" "$EXIT_ERROR"
 	fi
 
 	# Build and Install (to the final sysroot destination)
 	log_header "Building and installing libdvbcsa (logging to file)"
 	local -a make_args=("-j$(sys_get_cpu_count)" "install" "DESTDIR=$final_sysroot")
-	run_with_logging "$log_file" make "${make_args[@]}"
-	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+	# Here we use run_with_logging because it's the main build step and we want its output.
+	# We can tee it to the main build log as well for consolidation.
+	# For simplicity in this dependency, we'll log silently.
+	if ! { make "${make_args[@]}" >>"$log_file" 2>&1; }; then
 		log_fatal "libdvbcsa make/install failed. See log: $log_file" "$EXIT_ERROR"
 	fi
 

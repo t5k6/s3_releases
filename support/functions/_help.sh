@@ -98,5 +98,5 @@ ui_show_help() {
 	printf "$w_l\n\n  use_vars :\n  --------$w_n\n"
 	ui_helper_format_columns 75 "(_off)" "${!USE_vars[@]}"
 
-	_nl # Final newline
+	ui_show_newline # Final newline
 }

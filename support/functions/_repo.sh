@@ -8,7 +8,7 @@
 # =============================================================================
 
 repo_checkout() {
-	if $(USEGIT); then
+	if $(repo_is_git); then
 		repo_checkout_git "$@"
 	else
 		repo_checkout_svn "$@"
@@ -16,7 +16,7 @@ repo_checkout() {
 }
 
 repo_update() {
-	if $(USEGIT); then
+	if $(repo_is_git); then
 		repo_update_git "$@"
 	else
 		repo_update_svn "$@"
@@ -48,7 +48,7 @@ repo_clean() {
 	msg+="  - ${count_backups} Backup Archive(s)\n\n"
 	msg+="For target: oscam-${REPO}${ID}\n\nAre you sure you want to proceed?"
 
-	if ! menu_yes_no "$msg"; then
+	if ! ui_show_yesno "$msg"; then
 		log_info "Clean operation cancelled by user."
 		err_pop_context
 		return 0
@@ -95,7 +95,7 @@ repo_backup() {
 	fi
 
 	local rev
-	rev="$($(USEGIT) && COMMIT || REVISION)"
+	rev="$($(repo_is_git) && repo_get_commit || repo_get_revision)"
 	local backup_name="${rev}-${REPO}${ID}.tar.gz"
 	local backup_path="$brepo/$backup_name"
 	local latest_link="$brepo/last-${REPO}${ID}.tar.gz"
@@ -104,10 +104,10 @@ repo_backup() {
 
 	# Save a master copy of config files before backup
 	if [[ -f "${repodir}/config.sh" ]]; then
-		cp -f "${repodir}/config.sh" "$configdir/config.sh.master"
+		validate_command "Backing up master config.sh" cp -f "${repodir}/config.sh" "$configdir/config.sh.master"
 	fi
 	if [[ -f "${repodir}/Makefile" ]]; then
-		cp -f "${repodir}/Makefile" "$configdir/Makefile.master"
+		validate_command "Backing up master Makefile" cp -f "${repodir}/Makefile" "$configdir/Makefile.master"
 	fi
 
 	# Use unified archive creation
@@ -141,14 +141,10 @@ repo_restore() {
 			return 1
 		fi
 
-		menu_init "Select Backup to Restore"
+		menu_init "Select Backup to Restore" "Restore Backup from Archive"
+		menu_add_option "last" "Latest available backup"
 		for b in "${backups[@]}"; do
-			# Highlight the 'last' symlink for clarity
-			if [[ "$b" == "last-${REPO}${ID}.tar.gz" ]]; then
-				menu_add_option "$b" "$b (Latest)"
-			else
-				menu_add_option "$b" "$b"
-			fi
+			menu_add_option "$b" "$b"
 		done
 
 		if menu_show_list; then
@@ -161,7 +157,7 @@ repo_restore() {
 	fi
 
 	local backup_path="$brepo/$target_backup"
-	# Handle "last" keyword specifically if passed via CLI
+	# Handle "last" keyword specifically if passed via CLI or menu
 	if [[ "$target_backup" == "last" ]]; then
 		backup_path="$brepo/last-${REPO}${ID}.tar.gz"
 	fi
@@ -172,7 +168,7 @@ repo_restore() {
 		return 1
 	fi
 
-	log_header "Restoring Repository from $target_backup"
+	log_header "Restoring Repository from $(basename "$backup_path")"
 
 	# Clean existing repo if it exists
 	if [[ -d "${repodir}" ]]; then
@@ -184,7 +180,7 @@ repo_restore() {
 
 	# Use unified Archive Extraction
 	# We extract to workdir because the archive contains the 'oscam-svn' folder itself
-	if file_extract_archive "$backup_path" "$workdir" "ui_show_progressbox 'Restoring Backup' 'Extracting $target_backup...'"; then
+	if file_extract_archive "$backup_path" "$workdir" "ui_show_progressbox 'Restoring Backup' 'Extracting $(basename "$backup_path")...'"; then
 		log_info "Restore complete."
 
 		# Cleanup old state files
@@ -217,57 +213,33 @@ repo_get_revision() {
 	fi
 }
 
-repo_get_commit() {
-	if [[ -d "${repodir}" ]] && $(USEGIT); then
-		git -C "${repodir}" rev-parse --short HEAD 2>/dev/null || echo ""
-	else
+repo_get_branch() {
+	err_push_context "Get repo branch"
+	if [[ ! -d "${repodir}" ]]; then
 		echo ""
+		err_pop_context
+		return
 	fi
-}
 
-BRANCH() {
-	if [[ -d "${repodir}" ]]; then
-		if $(USEGIT); then
-			local ref branch
-			ref="$(git -C "${repodir}" name-rev --name-only "$(COMMIT)" 2>/dev/null | awk -F'/' '{ print $NF }' | awk -F'~' '{ print $1 }' | awk -F'^' '{ print $1 }')"
-			if [[ "$ref" == "$(REVISION)" ]]; then
-				branch=$(git -C "${repodir}" branch --show-current)
-				[[ -z "$branch" ]] && echo 'master' || echo "$branch"
-			else
-				echo "$ref"
-			fi
-		else
-			# SVN fallback
-			echo "$trunkurl" | awk -F'/' '{ print $NF }'
-		fi
-	fi
-}
-
-repo_is_git() {
-	echo "$URL_OSCAM_REPO" | grep -qe '^git@\|.git$'
-}
-
-USEGIT() {
-	repo_is_git
-}
-
-REFTYPE() {
-	if [[ "$1" =~ ^[0-9a-f]{8,40}$ ]]; then
-		echo 'sha'
-	elif [[ "$1" =~ ^[0-9]+$ ]]; then
-		echo 'tag'
+	if repo_is_git; then
+		# A robust way to find the current branch or tag
+		git -C "${repodir}" symbolic-ref --short -q HEAD ||
+			git -C "${repodir}" describe --tags --exact-match 2>/dev/null ||
+			git -C "${repodir}" rev-parse --short HEAD
 	else
-		echo 'branch'
+		# SVN fallback remains the same
+		echo "$trunkurl" | awk -F'/' '{ print $NF }'
 	fi
+	err_pop_context
 }
 
-REPOTYPE() {
-	$(USEGIT) && echo 'git' || echo 'svn'
+repo_get_type() {
+	repo_is_git && echo "git" || echo "svn"
 }
 
-REPOURL() {
+repo_get_url() {
 	if [[ -d "${repodir}" ]]; then
-		if $(USEGIT); then
+		if repo_is_git; then
 			git -C "${repodir}" config --get remote.origin.url
 		else
 			svn info "${repodir}" | sed -ne 's/^URL: //p'
@@ -277,22 +249,28 @@ REPOURL() {
 	fi
 }
 
-REPOURLDIRTY() {
-	[[ "$(REPOURL)" != "$URL_OSCAM_REPO" ]]
+repo_is_url_dirty() {
+	# Compares the working copy's remote URL to the one defined in the s3 config.
+	# Returns true (0) if they are different.
+	[[ "$(repo_get_url)" != "$URL_OSCAM_REPO" ]]
 }
 
-REPOIDENT() {
+repo_get_identifier() {
 	if [[ -n "${SOURCE:-}" ]]; then
-		echo " $SOURCE"
+		echo "${SOURCE}"
 	else
 		echo ""
 	fi
 }
 
-REVISION() {
-	repo_get_revision
+repo_is_git() {
+	echo "$URL_OSCAM_REPO" | grep -qe '^git@\|.git$'
 }
 
-COMMIT() {
-	repo_get_commit
+repo_get_commit() {
+	if [[ -d "${repodir}" ]] && repo_is_git; then
+		git -C "${repodir}" rev-parse --short HEAD 2>/dev/null || echo ""
+	else
+		echo ""
+	fi
 }

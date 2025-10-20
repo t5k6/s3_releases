@@ -67,19 +67,19 @@ build_openssl() {
 	config_target=$(_openssl_get_config_target "$cc")
 
 	local -a config_args=("$config_target" "no-shared" "no-tests" "--prefix=$install_dir")
-	if ! (./Configure "${config_args[@]}" >>"$log_file" 2>&1); then
+	if ! { ./Configure "${config_args[@]}" >>"$log_file" 2>&1; }; then
 		log_fatal "OpenSSL configuration failed. See log: $log_file" "$EXIT_ERROR"
 	fi
 
 	# Build
 	log_header "Building OpenSSL $version (logging to file)"
-	if ! (make -j"$(sys_get_cpu_count)" >>"$log_file" 2>&1); then
+	if ! { make -j"$(sys_get_cpu_count)" >>"$log_file" 2>&1; }; then
 		log_fatal "OpenSSL make failed. See log: $log_file" "$EXIT_ERROR"
 	fi
 
 	# Install (to temporary directory)
 	log_header "Installing OpenSSL $version to staging area (logging to file)"
-	if ! (make install_sw >>"$log_file" 2>&1); then
+	if ! { make install_sw >>"$log_file" 2>&1; }; then
 		log_fatal "OpenSSL staging install failed. See log: $log_file" "$EXIT_ERROR"
 	fi
 
@@ -100,13 +100,14 @@ build_openssl() {
 	log_info "OpenSSL $version build and installation complete."
 	export PATH="$original_path"
 	err_pop_context
-	return 0
 }
 
 # Private helper to handle downloading and extraction
 _openssl_download_and_extract() {
 	local version="$1"
 	local dest_dir="$2"
+	err_push_context "_openssl_download_and_extract:$version"
+
 	local archive_name="openssl-$version.tar.gz"
 	local archive_path="$dldir/$archive_name"
 	local url="https://www.openssl.org/source/$archive_name"
@@ -115,6 +116,7 @@ _openssl_download_and_extract() {
 	expected_hash=$(net_get_openssl_checksum "$archive_name")
 	if [[ -z "$expected_hash" ]]; then
 		log_error "Could not retrieve the official checksum for OpenSSL $version. Aborting for safety."
+		err_pop_context
 		return 1
 	fi
 	log_info "Retrieved official SHA256 hash for $archive_name: $expected_hash"
@@ -132,10 +134,12 @@ _openssl_download_and_extract() {
 	if [[ ! -f "$archive_path" ]]; then
 		log_header "Downloading OpenSSL $version"
 		if ! net_download_file "$url" "$archive_path" "ui_show_progressbox 'Downloading OpenSSL' 'Downloading $archive_name'"; then
+			err_pop_context
 			return 1
 		fi
 		if ! echo "$expected_hash  $archive_path" | sha256sum --status -c - &>/dev/null; then
 			log_error "Checksum validation failed after download for '$archive_path'."
+			err_pop_context
 			return 1
 		fi
 	fi
@@ -144,7 +148,8 @@ _openssl_download_and_extract() {
 	rm -rf "$dest_dir/openssl-$version"
 	if ! validate_command "Extracting OpenSSL archive" tar -xzf "$archive_path" -C "$dest_dir"; then
 		log_error "Failed to extract OpenSSL archive."
+		err_pop_context
 		return 1
 	fi
-	return 0
+	err_pop_context
 }

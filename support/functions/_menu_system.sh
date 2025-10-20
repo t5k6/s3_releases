@@ -8,11 +8,27 @@
 # =============================================================================
 
 # ------------------------------------------------------------------------------
+# DIALOG COMMAND CONFIGURATION
+# ------------------------------------------------------------------------------
+# This logic is now self-contained within the menu system for robustness.
+gui="$(type -pf dialog)"
+st_="--stdout"
+ib_="--infobox"
+ip_="--inputbox"
+nc_="--no-cancel"
+cl_="--checklist"
+rl_="--radiolist"
+bt_="--backtitle"
+pb_="--progressbox"
+title_="SIMPLEBUILD3 $(sys_show_version | tr '\n' ' ')"
+
+# ------------------------------------------------------------------------------
 # MENU STATE MANAGEMENT
 # ------------------------------------------------------------------------------
 
 _MENU_OPTION_COUNT=0
 _MENU_TITLE=""
+_MENU_DIALOG_TITLE=""
 _MENU_ITEMS=()
 _MENU_OPTIONS_LIST=()
 _MENU_SELECTED_OPTION=""
@@ -23,9 +39,11 @@ _MENU_SELECTED_OPTION=""
 
 menu_init() {
 	# Initialize a new menu
-	local title="${1:-Menu}"
+	local text="${1:-Menu}"
+	local dialog_title="${2:-}" # Optional title for the dialog window
 	_MENU_OPTION_COUNT=0
-	_MENU_TITLE="$title"
+	_MENU_TITLE="$text"
+	_MENU_DIALOG_TITLE="$dialog_title"
 	_MENU_ITEMS=()
 	_MENU_OPTIONS_LIST=()
 }
@@ -36,8 +54,9 @@ menu_add_option() {
 	local option_text="$2"
 	local state="${3:-off}" # on/off/disabled
 
-	# Replace newline characters in option text to prevent dialog argument errors
-	option_text="${option_text//$'\n'/ }"
+	# Sanitize option text to prevent shell injection in dialog commands
+	option_text="${option_text//\"/}"     # Remove quotes
+	option_text="${option_text//$'\n'/ }" # Remove newlines
 
 	if [ "$_MENU_OPTION_COUNT" -gt 0 ]; then
 		_MENU_OPTIONS_LIST[${_MENU_OPTION_COUNT}]="${option_id}#${option_text}#${state}"
@@ -65,23 +84,30 @@ _menu_show_internal() {
 	local width="$3"
 	shift 3
 
-	# --- ARCHITECTURAL FIX: Build arguments in an array ---
-	# This is a robust replacement for the fragile `IFS` method. It correctly
-	# handles empty strings and spaces within arguments.
-	local cmd_args=("$gui" "$st_" "$bt_" "$title_" "$menu_type" "$_MENU_TITLE" "$height" "$width")
+	local sanitized_title
+	sanitized_title="${_MENU_TITLE//\"/}"         # Remove quotes
+	sanitized_title="${sanitized_title//$'\n'/ }" # Remove newlines
+
+	local cmd_args=("$gui" "$st_" "$bt_" "$title_")
+
+	if [[ -n "$_MENU_DIALOG_TITLE" ]]; then
+		cmd_args+=("--title" "$_MENU_DIALOG_TITLE")
+	fi
+	cmd_args+=("$menu_type" "$sanitized_title" "$height" "$width")
 
 	case "$menu_type" in
 	--checklist | --radiolist | --menu)
-		# These types require the item count as an argument
 		cmd_args+=("$_MENU_OPTION_COUNT")
 		;;
 	esac
 
-	# Manually parse each item and add its parts to the command array
 	for item_str in "${_MENU_OPTIONS_LIST[@]}"; do
 		local tag text state
 		tag=$(echo "$item_str" | cut -d'#' -f1)
 		text=$(echo "$item_str" | cut -d'#' -f2)
+		text="${text//\"/}"     # Remove quotes
+		text="${text//$'\n'/ }" # Remove newlines
+
 		if [[ "$menu_type" == "--menu" ]]; then
 			cmd_args+=("$tag" "$text")
 		else
@@ -90,7 +116,7 @@ _menu_show_internal() {
 		fi
 	done
 
-	log_debug "Executing dialog for menu: '$_MENU_TITLE'"
+	log_debug "Executing dialog for menu: '$sanitized_title'"
 
 	# Execute and capture output and stderr
 	local dialog_stderr_file
@@ -113,20 +139,20 @@ _menu_show_internal() {
 }
 
 menu_show_checkbox() {
-	local height="${1:-$((_MENU_OPTION_COUNT + 8))}"
-	local width="${2:-75}"
+	local height="${1:-0}"
+	local width="${2:-0}"
 	_menu_show_internal "--checklist" "$height" "$width"
 }
 
 menu_show_radiolist() {
-	local height="${1:-$((_MENU_OPTION_COUNT + 8))}"
-	local width="${2:-75}"
+	local height="${1:-0}"
+	local width="${2:-0}"
 	_menu_show_internal "--radiolist" "$height" "$width"
 }
 
 menu_show_list() {
-	local height="${1:-$((_MENU_OPTION_COUNT + 8))}"
-	local width="${2:-75}"
+	local height="${1:-0}"
+	local width="${2:-0}"
 	_menu_show_internal "--menu" "$height" "$width"
 }
 
@@ -156,6 +182,12 @@ menu_is_option_selected() {
 	done
 
 	return 1
+}
+
+ui_show_header() {
+	# Display a header message (simple logging function)
+	local header_text="$1"
+	log_header "$header_text"
 }
 
 menu_get_first_selection() {
@@ -191,6 +223,7 @@ menu_clear_state() {
 	# Clear all menu state
 	_MENU_OPTION_COUNT=0
 	_MENU_TITLE=""
+	_MENU_DIALOG_TITLE=""
 	_MENU_ITEMS=()
 	_MENU_OPTIONS_LIST=()
 	_MENU_SELECTED_OPTION=""
@@ -269,7 +302,8 @@ menu_config_checkbox() {
 	shift
 	declare -n config_vars="$1"
 
-	menu_init "$config_description Configuration"
+	local config_title="$config_description Configuration"
+	menu_init "$config_title" "$config_title"
 
 	for var in "${!config_vars[@]}"; do
 		local display_text="${var}"
@@ -292,32 +326,23 @@ menu_config_checkbox() {
 	fi
 }
 
-menu_yes_no() {
+ui_show_yesno() {
 	# Simple yes/no dialog
 	local question="$1"
 	local default="${2:-yes}"
-
-	menu_init "$question"
-	menu_add_option "yes" "Yes" "off"
-	menu_add_option "no" "No" "off"
-
-	if [ "$default" = "yes" ]; then
-		_MENU_OPTIONS_LIST[0]="yes#Yes#on"
-		_MENU_OPTIONS_LIST[1]="no#No#off"
+	local yes_state="off"
+	local no_state="off"
+	if [[ "$default" == "yes" ]]; then
+		yes_state="on"
 	else
-		_MENU_OPTIONS_LIST[0]="yes#Yes#off"
-		_MENU_OPTIONS_LIST[1]="no#No#on"
+		no_state="on"
 	fi
 
-	if menu_show_radiolist "7" "40"; then
-		local selection="$(menu_get_first_selection)"
-		case "$selection" in
-		"yes") return 0 ;;
-		"no") return 1 ;;
-		*) return 1 ;;
-		esac
+	if "$gui" "$bt_" "$title_" --yesno "$question" 8 50; then
+		return 0 # Yes
+	else
+		return 1 # No or ESC
 	fi
-	return 1
 }
 
 menu_file_selection() {
@@ -329,7 +354,7 @@ menu_file_selection() {
 	local files=()
 	local item_count=0
 
-	menu_init "$prompt"
+	menu_init "$prompt" "$prompt"
 
 	while IFS= read -r -d '' file; do
 		local rel_path="${file#$directory/}"

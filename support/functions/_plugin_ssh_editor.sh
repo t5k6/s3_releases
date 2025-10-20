@@ -4,7 +4,7 @@
 
 # Plugin entry point for creating/editing SSH profiles.
 # This wrapper calls the refactored, standardized UI function.
-ssh_editor() {
+plugin_edit_ssh_profile() {
 	ui_edit_ssh_profile "$@"
 }
 
@@ -15,13 +15,12 @@ list_ssh_profiles() {
 }
 
 # Core UI logic for the SSH profile editor.
-# Adheres to modern standards: UCM, robust UI loops, and error handling.
 ui_edit_ssh_profile() {
 	err_push_context "SSH Profile Editor"
 	local profile_file_arg="$1"
+	local default_toolchain="$2"
 
 	# --- Configuration Loading ---
-	# Use the Unified Configuration Manager (UCM) for secure loading.
 	local loginname password ip port replace_target stop_target targetcam toolchain remote_command
 	if [[ -n "$profile_file_arg" && -f "$profdir/$profile_file_arg" ]]; then
 		log_info "Loading existing profile: $profile_file_arg"
@@ -47,24 +46,28 @@ ui_edit_ssh_profile() {
 		replace_target="y"
 		stop_target="y"
 		targetcam="/usr/bin/oscam"
-		toolchain=""
+		toolchain="${default_toolchain:-}"
 		remote_command="none"
 	fi
 
 	# --- UI Loop ---
-	# Use a loop instead of recursion for robust input handling.
 	while true; do
-		local form_items=("${txt_loginname:-Login Name:}" 1 1 "$loginname" 1 18 40 39
-			"${txt_password:-Password:}" 2 1 "$password" 2 18 40 39
-			"IP Address/Hostname:" 3 1 "$ip" 3 18 40 39
-			"SSH Port:" 4 1 "$port" 4 18 6 5
-			"Associated Toolchain:" 5 1 "$toolchain" 5 18 40 39
-			"Remote Binary Path:" 6 1 "$targetcam" 6 18 40 39
-			"Replace Binary? (y/n):" 7 1 "$replace_target" 7 18 2 2
-			"Stop Service? (y/n):" 8 1 "$stop_target" 8 18 2 2)
+		# Define layout variables for clarity and to prevent label/field overlap.
+		local input_col=25                     # Column where input fields start.
+		local field_len=40                     # Length of most text input fields.
+		local field_len_max=$((field_len - 1)) # Max input for most fields.
+
+		local form_items=("${txt_loginname:-Login Name:}" 1 1 "$loginname" 1 "$input_col" "$field_len" "$field_len_max"
+			"${txt_password:-Password:}" 2 1 "$password" 2 "$input_col" "$field_len" "$field_len_max"
+			"IP Address/Hostname:" 3 1 "$ip" 3 "$input_col" "$field_len" "$field_len_max"
+			"SSH Port:" 4 1 "$port" 4 "$input_col" 6 5
+			"Associated Toolchain:" 5 1 "$toolchain" 5 "$input_col" "$field_len" "$field_len_max"
+			"Remote Binary Path:" 6 1 "$targetcam" 6 "$input_col" "$field_len" "$field_len_max"
+			"Replace Binary? (y/n):" 7 1 "$replace_target" 7 "$input_col" 3 1
+			"Stop Service? (y/n):" 8 1 "$stop_target" 8 "$input_col" 3 1)
 
 		local config_parts
-		config_parts=$(ui_show_form "SSH Transfer Profile Editor" " " 15 65 8 "${form_items[@]}")
+		config_parts=$(ui_show_form "SSH Transfer Profile Editor" " " 15 70 8 "${form_items[@]}")
 		local return_value=$?
 		# Handle Cancel/ESC
 		if [[ $return_value -ne 0 ]]; then
@@ -121,14 +124,14 @@ ui_edit_ssh_profile() {
 		local final_path="$profdir/${config_file_name}.ssh"
 		if cfg_save_file "profile" "$final_path"; then
 			log_info "Profile saved successfully to: $final_path"
-			break # Exit the loop on success
+			echo "${config_file_name}.ssh" # Return the filename on stdout for IPC
+			break                          # Exit the loop on success
 		else
 			ui_show_msgbox "Error" "Failed to save profile. Check permissions on '$profdir'."
 			continue
 		fi
 	done
 
-	sys_list_ssh_profiles
 	err_pop_context
 	return 0
 }
@@ -136,7 +139,7 @@ ui_edit_ssh_profile() {
 # Lists all available SSH profiles to the console using standard logging.
 sys_list_ssh_profiles() {
 	clear
-	slogo # Keep the branding consistent
+	slogo
 	log_header "Available SSH Profiles"
 	log_info "To use a profile: ./s3 upload <profile_name.ssh>"
 
@@ -146,12 +149,14 @@ sys_list_ssh_profiles() {
 	if [[ ${#profiles[@]} -gt 0 ]]; then
 		local i=1
 		for profile in "${profiles[@]}"; do
-			echo "  ($i) > ${g_l}${profile}${re_}" # Use echo for simpler formatting here
+			# This directs output to stderr and the main log file, preventing
+			# interference with command substitution (stdout).
+			log_plain "  ($i) > ${g_l}${profile}${re_}"
 			((i++))
 		done
 	else
 		log_warn "No SSH profiles found in '$profdir'."
-		log_info "Create one with: ./s3 ssh_editor"
+		log_info "Create one with: ./s3 plugin_edit_ssh_profile"
 	fi
-	echo "" # Add a final newline for spacing
+	ui_show_newline
 }

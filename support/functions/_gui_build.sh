@@ -21,37 +21,43 @@ _gui_build() {
 
 	log_info "Starting build pipeline for toolchain: ${toolchain_name}"
 
-	# --- Use process substitution with 'tee' to both display output and capture the return value ---
-	# This allows the`ui_show_programbox` to display the scrolling build log while
-	# still allowing the pipeline's final return values (oscam_name) to be captured.
-	local pipeline_output
-	pipeline_output=$(_build_run_pipeline "$toolchain_name" "$log_path" | tee >(ui_show_programbox "Build $(REPOIDENT)"))
-	local pipeline_exit_code=${PIPESTATUS[0]}
+	# Use metadata file to reliably capture build artifacts
+	local meta_file
+	meta_file=$(mktemp)
+	trap 'rm -f "$meta_file"' RETURN
+
+	# Show a waiting message to the user, as the build will now run synchronously.
+	ui_show_msgbox "Build Starting" "The build process for '$toolchain_name' is starting.\n\nPlease wait, this may take several minutes.\nThe screen will update upon completion." "8" "70"
+
+	# Run the build pipeline synchronously. All output is handled by the pipeline's internal logging.
+	_build_run_pipeline "$toolchain_name" "$log_path" "$meta_file"
+	local pipeline_exit_code=$?
+
+	# Create the lastbuild.log symlink immediately after the build finishes.
+	if [[ -f "$log_path" ]]; then
+		if ! validate_command "Update last build log symlink" ln -frs "$log_path" "${workdir}/lastbuild.log"; then
+			log_warn "Failed to update lastbuild.log symlink; log file: ${log_path}"
+		fi
+	else
+		log_warn "Build log file '$log_path' was not created. Cannot create symlink."
+	fi
 
 	local oscam_name
-	oscam_name=$(echo "$pipeline_output" | head -n 1)
-
-	# Handle TAR generation (this part remains the same)
-	if [[ "$(cfg_get_value "s3" "USE_TARGZ" "0")" == "1" ]]; then
-		log_info "Generating TAR archive for build artifact"
-		if ! run_with_logging "$log_path" tar_cam_gui "$oscam_name" "$tartmp" | ui_show_progressbox "TAR Binary" "" 10 70; then
-			log_warn "TAR archive generation failed; continuing post-processing"
-		fi
-	fi
-
-	if ! validate_command "Update last build log symlink" ln -frs "$log_path" "${workdir}/lastbuild.log"; then
-		log_warn "Failed to update lastbuild.log symlink; log file: ${log_path}"
-	fi
+	oscam_name=$(head -n1 "$meta_file")
 
 	# --- Provide explicit UI feedback for both success and failure ---
 	if [[ "$pipeline_exit_code" -ne 0 ]]; then
-		if [[ -z "$oscam_name" ]]; then
-			log_warn "Failed to retrieve binary name from build pipeline, as the build failed."
-		fi
-		ui_show_msgbox "Build Failed" "The build failed. Check log:\n\n${log_path}"
+		log_error "GUI Build failed for toolchain: ${toolchain_name}"
+		# On failure, automatically show the user the log file.
+		ui_show_msgbox "Build Failed" "The build failed. The log file will now be displayed."
+		ui_show_textbox "Build Log: $log_name" "$log_path"
 	else
 		log_info "GUI Build completed successfully for toolchain: ${toolchain_name}"
-		ui_show_msgbox "Build Successful" "The binary has been created successfully:\n\n${bdir}/${oscam_name}"
+
+		build_finalize_and_archive "$oscam_name" "gui" "$toolchain_name"
+
+		# On success, show the interactive post-build menu.
+		ui_show_post_build_menu "$toolchain_name" "$oscam_name"
 	fi
 
 	err_pop_context

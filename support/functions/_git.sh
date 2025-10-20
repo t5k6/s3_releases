@@ -4,7 +4,6 @@ repo_checkout_git() {
 	err_push_context "Git checkout operation"
 	log_header "Starting Git Checkout"
 
-	# Use the new network validation, which is already integrated into the error system
 	if ! net_check_url "$URL_OSCAM_REPO"; then
 		log_fatal "Repository URL is not accessible: $URL_OSCAM_REPO" "$EXIT_NETWORK"
 	fi
@@ -35,14 +34,13 @@ repo_checkout_git() {
 		log_fatal "Checkout failed: 'config.sh' not found in repository." "$EXIT_MISSING"
 	fi
 
-	log_info "Revision:  $y_l$(REVISION) @ $(COMMIT) @ $(BRANCH)${w_l}"
+	log_info "Revision:  $y_l$(repo_get_revision) @ $(repo_get_commit) @ $(repo_get_branch)${w_l}"
 	log_info "Local Path: $y_l${repodir}${w_l}"
 
 	# Reset and backup repository state
 	validate_command "Resetting config" "${repodir}/config.sh" -R
 	[ -f "$ispatched" ] && rm -f "$ispatched"
 
-	# Use new unified backup function
 	if ! repo_backup; then
 		log_warn "Initial repository backup failed."
 	fi
@@ -80,7 +78,8 @@ repo_update_git() {
 	else
 		log_warn "Repository is a shallow clone. Performing a fresh checkout to ensure consistency."
 		cd "$workdir" || return 1
-		branch="$(BRANCH)"
+		local branch
+		branch=$(repo_get_branch)
 		validate_command "Removing shallow clone directory" rm -rf "${repodir}"
 		local clone_depth
 		clone_depth=$(cfg_get_value "s3" "GIT_CLONE_DEPTH" "1")
@@ -91,12 +90,11 @@ repo_update_git() {
 		log_fatal "Update failed: 'config.sh' not found in repository." "$EXIT_MISSING"
 	fi
 
-	log_info "Revision:  $y_l$(REVISION) @ $(COMMIT) @ $(BRANCH)${w_l}"
+	log_info "Revision:  $y_l$(repo_get_revision) @ $(repo_get_commit) @ $(repo_get_branch)${w_l}"
 	log_info "Local Path: $y_l${repodir}${w_l}"
 
 	validate_command "Resetting config" "${repodir}/config.sh" -R
 
-	# Use new unified backup function
 	if ! repo_backup; then
 		log_warn "Repository backup failed after update."
 	fi

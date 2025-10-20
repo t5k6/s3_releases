@@ -87,7 +87,7 @@ cfg_save_file() {
 		# Sort keys for consistent output
 		for cache_key in $(echo "${!S3_CONFIGS[@]}" | tr ' ' '\n' | sort); do
 			if [[ "$cache_key" == "${namespace}:"* ]]; then
-				local key="${cache_key#*:}"
+				local key="${cache_key#${namespace}:}"
 				printf '%s="%s"\n' "$key" "${S3_CONFIGS[$cache_key]}"
 			fi
 		done

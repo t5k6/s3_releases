@@ -1,39 +1,145 @@
 #!/bin/bash
 
-_nl() {
-	printf "$rs_\n"
-}
-_set_dialog_types() {
-	gui="$(type -pf dialog)"
-	st_="--stdout"
-	ib_="--infobox"
-	ip_="--inputbox"
-	nc_="--no-cancel"
-	cl_="--checklist"
-	rl_="--radiolist"
-	bt_="--backtitle"
-	pb_="--progressbox"
-	title_="SIMPLEBUILD3 $(version | tr '\n' ' ')"
+sys_exit() {
+	err_push_context "sys_exit"
+	log_info "SimpleBuild3 is shutting down."
+	clear
+	ui_show_s3_logo
+	# The global EXIT trap handles cleanup automatically.
+	exit 0
 }
 
-cedit() {
+ui_show_newline() {
+	log_plain "$re_"
+}
+
+sys_edit_s3_config() {
 	ui_edit_s3_config
-	bye
+	sys_exit
 }
 
-timer_calc() {
+sys_calc_time_diff() {
 	Tcalc="$((Te - Ts))"
 }
-timer_stop() {
+sys_print_time_diff() {
+	err_push_context "sys_print_time_diff"
+	sys_calc_time_diff
+	validate_command "Printing build time" printf "\n |  TIME  >\t[ $txt_buildtime $((Tcalc / 60)) min(s) $((Tcalc % 60)) secs ]\n"
+	err_pop_context
+}
+sys_timer_stop() {
 	Te="$(date +%s)"
 }
-timer_start() {
+
+# Determines if a given binary file can be executed on the current host system.
+# Takes into account cross-compilation scenarios.
+# Returns 0 (true) if runnable, 1 (false) otherwise.
+sys_validate_binary_runnable() {
+	local binary_path="$1"
+	err_push_context "sys_validate_binary_runnable:$binary_path"
+
+	validate_command "Checking binary exists and is executable" [[ -x "$binary_path" ]] || {
+		err_pop_context
+		return 1
+	}
+
+	# 2. Get host architecture using the standard 'uname' command.
+	local host_arch
+	host_arch=$(uname -m)
+
+	# 3. Robustly parse the binary's architecture using 'file' and a case statement.
+	local binary_arch="unknown"
+	local file_output
+	validate_command "Retrieving binary architecture" file_output=$(file -b "$binary_path") || {
+		log_warn "Could not determine binary architecture, assuming cross-compiled."
+		err_pop_context
+		return 1
+	}
+
+	case "$file_output" in
+	*86-64* | *amd64*) binary_arch="x86_64" ;;
+	*i[3-6]86*) binary_arch="i686" ;;
+	*ARM*aarch64*) binary_arch="aarch64" ;;
+	*ARM*) binary_arch="arm" ;;
+	*MIPS*) binary_arch="mips" ;;
+	*PowerPC* | *ppc*) binary_arch="ppc" ;;
+	esac
+
+	# 4. Perform the compatibility check.
+	if [[ "$host_arch" == "$binary_arch" ]]; then
+		err_pop_context
+		return 0 # Exact match, runnable.
+	elif [[ "$host_arch" == "x86_64" && "$binary_arch" == "i686" ]]; then
+		err_pop_context
+		return 0 # 64-bit x86 host can run 32-bit x86 binary, runnable.
+	fi
+
+	# If none of the above, it's a cross-compiled binary and not runnable.
+	err_pop_context
+	return 1
+}
+
+# Consolidated post-build artifact handling.
+# Performs TAR generation (if enabled), diagnostics, and extra copy to binaries dir.
+build_finalize_and_archive() {
+	local binary_name="$1"
+	local mode="${2:-cli}"    # "gui" for progress UI, "cli" otherwise
+	local toolchain_name="$3" # For logging cross-compilation messages
+	err_push_context "build_finalize_and_archive: $binary_name"
+
+	local binary_path="$bdir/$binary_name"
+
+	# Handle USE_DIAG with cross-compilation-aware check
+	if [[ "$(cfg_get_value "s3" "USE_DIAG" "0")" == "1" && -x "$binary_path" ]]; then
+		if sys_validate_binary_runnable "$binary_path"; then
+			local diag_log="$ldir/diag_$(date +%F_%H-%M-%S)_${binary_name}.log"
+			log_info "Generating runtime diagnostics for '$binary_name'"
+			if validate_command "Running diagnostics" "$binary_path" -h >"$diag_log" 2>&1; then
+				log_info "Diagnostics saved to $diag_log"
+			fi
+		else
+			log_info "Skipping runtime diagnostics: Binary '$binary_name' is not runnable on this host."
+		fi
+	fi
+
+	# Handle EXTRA_COPY_DIR to copy to working directory
+	if [[ "$(cfg_get_value "s3" "EXTRA_COPY_DIR" "0")" == "1" ]]; then
+		log_info "Copying artifact to extra directory: $here_"
+		if ! validate_command "Copying artifact" cp "$binary_path" "$here_/"; then
+			log_warn "Failed to copy artifact to extra directory."
+		fi
+	fi
+
+	# TAR generation based on configuration
+	if [[ "$(cfg_get_value "s3" "USE_TARGZ" "0")" == "1" ]]; then
+		log_info "Generating TAR archive"
+		local tar_name="${binary_name}.tar.gz"
+		local tar_path="$adir/$tar_name"
+		local temp_tar_dir=$(mktemp -d)
+		cp "$binary_path" "$temp_tar_dir/"
+		if [[ "${CUSTOM_CONFDIR:-}" != "not_set" && -d "$CUSTOM_CONFDIR" ]]; then
+			validate_command "Including confdir in TAR" cp -r "$CUSTOM_CONFDIR" "$temp_tar_dir/oscam-conf"
+		fi
+		local progress=""
+		[[ "$mode" == "gui" ]] && progress="ui_show_progressbox 'Creating TAR Archive'"
+		if file_create_archive "$tar_path" "$temp_tar_dir" "$progress"; then
+			log_info "TAR created: $tar_path"
+		else
+			log_warn "TAR creation failed"
+		fi
+		rm -rf "$temp_tar_dir"
+	fi
+
+	err_pop_context
+}
+
+sys_timer_start() {
 	Ts="$(date +%s)"
 }
-util_decode_base64() {
+sys_decode_base64() {
 	local input="$1"
 	if [[ -z "$input" ]]; then
-		log_error "util_decode_base64 was called with an empty string."
+		log_error "sys_decode_base64 was called with an empty string."
 		return 1
 	fi
 
@@ -44,21 +150,23 @@ util_decode_base64() {
 	fi
 	printf "%s" "$decoded_val"
 }
-get_module_name() {
-	printf "${INTERNAL_MODULES[$1]}"
+build_get_module_long_name() {
+	printf "%s" "${INTERNAL_MODULES[$1]}"
 }
 
-_systype() {
-	systype="bad"
+sys_get_arch_type() {
 	case "$(uname -m)" in
 	x86 | x86_64 | amd64 | i686)
-		systype="ok"
+		echo "ok"
+		;;
+	*)
+		echo "bad"
 		;;
 	esac
 }
 
-_generate_oscam_name() {
-	cd "${repodir}"
+build_generate_oscam_name() {
+	cd "${repodir}" || return 1
 	# Read toolchain config from UCM
 	local _toolchainname
 	_toolchainname=$(cfg_get_value "toolchain" "_toolchainname")
@@ -95,72 +203,41 @@ _generate_oscam_name() {
 	local _signed=""
 	[[ " ${enabled_modules} " =~ " WITH_SIGNING " ]] && _signed="-signed"
 
-	[ "${USE_vars[USE_COMPRESS]}" == "USE_COMPRESS=1" ] && _upx="-upx" || _upx=''
+	local _upx=''
+	[ "${USE_vars[USE_COMPRESS]}" == "1" ] && _upx="-upx"
+	local _b_name
 	[ "$_toolchainname" == "native" ] && _b_name="$(uname -s)-$(uname -m)" || _b_name="$_toolchainname"
-	if [ "${s3cfg_vars[ADD_PROFILE_NAME]}" == "0" ] || [ $pf_name == "not_set" ]; then
-		oscam_name="oscam-${REPO}$(REVISION)$($(USEGIT) && printf "@$(COMMIT)" || printf "")-$_b_name$_webif$_dvbapi$_ssl$_usb$_pcsc$_dvbcsa$_stapi$_stapi5$_emu$_ipv6$_icam$_neon$2$_upx$_signed"
+	local rev commit
+	rev=$(repo_get_revision)
+	commit=$(repo_get_commit)
+	if [ "$(cfg_get_value "s3" "ADD_PROFILE_NAME" "0")" == "0" ] || [ "$pf_name" == "not_set" ]; then
+		oscam_name="oscam-${REPO}${rev}$(repo_is_git && printf "@${commit}" || printf "")-${_b_name}${_webif}${_dvbapi}${_ssl}${_usb}${_pcsc}${_dvbcsa}${_stapi}${_stapi5}${_emu}${_ipv6}${_icam}${_neon}$2${_upx}${_signed}"
 	else
-		oscam_name="oscam-${REPO}$(REVISION)$($(USEGIT) && printf "@$(COMMIT)" || printf "")-${pf_name%.*}"
+		oscam_name="oscam-${REPO}${rev}$(repo_is_git && printf "@${commit}" || printf "")-${pf_name%.*}"
 	fi
 }
 
-e_readers() {
-	silent=$("${repodir}/config.sh" -s readers)
-	echo ${silent//READER_/}
-}
-e_protocols() {
-	silent=$("${repodir}/config.sh" -s protocols)
-	echo ${silent//MODULE_/}
-}
-e_card_readers() {
-	silent=$("${repodir}/config.sh" -s card_readers)
-	echo ${silent//CARDREADER_/}
-}
-e_addons() {
-	"${repodir}/config.sh" -s addons | sed 's/WEBIF_//g;s/WITH_//g;s/MODULE_//g;s/CS_//g;s/HAVE_//g;s/_CHARSETS//g;s/CW_CYCLE_CHECK/CWCC/g;s/SUPPORT//g'
-}
-sysinfo() {
-	printf "$g_l\nSYSTEM$w_l\n"
+sys_show_info() {
+	log_header "SYSTEM"
+	local system_info
 	system_info=$(type -pf lsb_release)
 	[ ${#system_info} -ge 11 ] && lsb_release -irc
-	printf "Uptime:\t\t$(uptime -p)\n"
-	printf "$g_l\nMEMORY$w_l\n"
-	free -mht | awk '/Mem/{print "Memory:\t\tTotal: " $2 "Mb\tUsed: " $3 "Mb\tFree: " $4 "Mb"} /Swap/{print "Swap:\t\tTotal: " $2 "Mb\tUsed: " $3 "Mb\tFree: " $4 "Mb" }'
+	log_plain "Uptime:\t\t$(uptime -p)"
+	log_header "MEMORY"
+	free -mht | awk '/Mem/{print "Memory:\t\tTotal: " $2 "\tUsed: " $3 "\tFree: " $4} /Swap/{print "Swap:\t\tTotal: " $2 "\tUsed: " $3 "\tFree: " $4 }'
 	[ -f /sys/dev/block ] && lsblk
-	printf "$g_l\n CPU$w_l\n"
+	log_header "CPU"
+	local cpu_info
 	cpu_info=$(type -pf lscpu)
 	[ ${#cpu_info} -ge 5 ] && lscpu | grep -iE 'model name|vendor id|Architecture|per socket|MHz'
-	printf "$g_l\nNetwork\n"
-	printf "$w_l""Hostname:\t$HOSTNAME\n"
+	log_header "Network"
+	log_plain "Hostname:\t$HOSTNAME"
 	ip -o addr | awk '/inet /{print "IP (" $2 "):\t" $4}'
 	ip route | awk '/default/ { printf "Gateway:\t"$3"\n" }'
 	awk '/^nameserver/{ printf "Name Server:\t" $2 "\n"}' /etc/resolv.conf
-	printf "$re_\n"
+	ui_show_newline
 }
-_sz() {
-	lmin=24
-	lmax=40
-	_lin=$(tput lines)
-	cmin=79
-	cmax=200
-	_col=$(tput cols)
-	if [ "$_lin" -gt "$lmin" ]; then
-		if [ "$_lin" -lt "$lmax" ] || [ "$_lin" -eq "$lmax" ]; then
-			_lines="$((_lin - 6))"
-		fi
-		if [ "$_lin" -gt "$lmax" ]; then
-			_lines="$((lmax - 6))"
-		fi
-	fi
-	if [ "$_col" -gt "$cmin" ]; then
-		if [ "$_col" -lt "$cmax" ] || [ "$_col" -eq "$cmax" ]; then
-			_cols="$((_col - 6))"
-		fi
-		if [ "$_col" -gt "$cmax" ]; then
-			_cols="$((cmax - 6))"
-		fi
-	fi
-}
+
 build_ensure_openssl() {
 	local sysroot="$1"
 	local toolchain_path="$2" # This is the path to the toolchain's root, e.g. .../toolchains/oe20_armv7
@@ -201,7 +278,7 @@ build_ensure_openssl() {
 ui_show_main_menu() {
 	err_push_context "ui_show_main_menu"
 	while true; do
-		menu_init "SimpleBuild3 Main Menu"
+		menu_init "SimpleBuild3 Main Menu" "SimpleBuild3 Main Menu"
 		menu_add_option "BUILD" "Build OScam"
 		menu_add_separator
 		menu_add_option "REPO" "Manage Repository"
@@ -212,7 +289,7 @@ ui_show_main_menu() {
 		menu_add_option "EXIT" "Exit"
 
 		if ! menu_show_list; then
-			bye # User pressed Cancel or ESC
+			sys_exit # User pressed Cancel or ESC
 		fi
 
 		local selection
@@ -228,7 +305,7 @@ ui_show_main_menu() {
 		TOOLCHAINS) ui_show_toolchain_management_menu ;; # Implemented in _toolchain.sh
 		SYSTEM) ui_show_system_config_menu ;;            # Implemented below
 		UPDATE_S3) sys_update_self ;;
-		EXIT) bye ;;
+		EXIT) sys_exit ;;
 		esac
 	done
 	err_pop_context
@@ -238,7 +315,7 @@ ui_show_main_menu() {
 ui_show_repository_menu() {
 	err_push_context "ui_show_repository_menu"
 	while true; do
-		menu_init "Repository Management"
+		menu_init "Repository Management" "Repository Management"
 		menu_add_option "UPDATE" "Checkout/Update OScam Source"
 		menu_add_option "CLEAN" "Clean Workspace (removes source & backups)"
 		menu_add_option "RESTORE" "Restore Last Good Repository Backup"
@@ -255,7 +332,7 @@ ui_show_repository_menu() {
 		CLEAN) repo_clean ;;
 		RESTORE) repo_restore "last-${REPO}${ID}" ;;
 		BACK) return 0 ;;
-		EXIT) bye ;;
+		EXIT) sys_exit ;;
 		esac
 	done
 	err_pop_context
@@ -265,7 +342,7 @@ ui_show_repository_menu() {
 ui_show_system_config_menu() {
 	err_push_context "ui_show_system_config_menu"
 	while true; do
-		menu_init "System & Configuration"
+		menu_init "System & Configuration" "System & Configuration"
 		menu_add_option "S3_CONFIG" "Edit SimpleBuild Config (simplebuild.config)"
 		menu_add_option "SSH_PROFILES" "Edit SSH Upload Profiles"
 		menu_add_option "SYSCHECK" "Run System Prerequisite Check"
@@ -279,49 +356,136 @@ ui_show_system_config_menu() {
 
 		case "$selection" in
 		S3_CONFIG) ui_edit_s3_config ;;
-		SSH_PROFILES) ssh_editor ;;
-		SYSCHECK) syscheck auto now ;;
+		SSH_PROFILES) ui_edit_ssh_profile ;;
+		SYSCHECK) sys_run_checks_interactive "auto" "now" ;;
 		BACK) return 0 ;;
-		EXIT) bye ;;
+		EXIT) sys_exit ;;
 		esac
 	done
 	err_pop_context
 }
 
-toolchain_edit_confdir_menu() {
+# Post-build menu for upload options.
+ui_show_post_build_menu() {
 	local toolchain_name="$1"
-	if [ -f "$tccfgdir/$toolchain_name" ]; then
-		# Use Unified Configuration Manager for secure loading
-		if cfg_load_file "toolchain" "$tccfgdir/$toolchain_name"; then
-			local confdir
-			confdir=$(ui_get_input " -[ $toolchain_name Toolchain$(REPOIDENT) ]- " "Enter new CONF_DIR path. Default is '$(cfg_get_value "toolchain" "_oscamconfdir_default")'." "$(cfg_get_value "toolchain" "_oscamconfdir_custom")")
+	local binary_name="$2"
+	err_push_context "Post-Build Menu"
 
-			case "$?" in
-			0)
-				# If user entered something
-				if [ -n "$confdir" ]; then
-					validate_command "Updating toolchain config" sed -i "s@^_oscamconfdir_custom.*@_oscamconfdir_custom=\"$confdir\"@" "$tccfgdir/$toolchain_name"
-				else # User cleared the input, revert to default
-					validate_command "Updating toolchain config" sed -i "s@^_oscamconfdir_custom.*@_oscamconfdir_custom=\"\"@" "$tccfgdir/$toolchain_name"
+	while true; do
+		local -a compatible_profiles=()
+		# Scan for compatible SSH profiles
+		if [[ -d "$profdir" ]]; then
+			for profile_path in "$profdir"/*.ssh; do
+				if [[ -f "$profile_path" ]]; then
+					# Use a unique namespace to avoid conflicts
+					if cfg_load_file "profile_check" "$profile_path"; then
+						local profile_tc
+						profile_tc=$(cfg_get_value "profile_check" "toolchain")
+						if [[ "$profile_tc" == "$toolchain_name" ]]; then
+							compatible_profiles+=("$(basename "$profile_path")")
+						fi
+					fi
 				fi
-				;;
-			*)
-				# ESC or cancel - keep current setting
-				: # Do nothing
-				;;
-			esac
+			done
+		fi
+
+		local menu_text="Build successful for '$toolchain_name'.\nBinary: $binary_name\n\nWhat would you like to do next?"
+		menu_init "$menu_text" "Build Successful"
+
+		if [[ ${#compatible_profiles[@]} -gt 0 ]]; then
+			log_info "Found ${#compatible_profiles[@]} compatible upload profile(s)."
+			for profile in "${compatible_profiles[@]}"; do
+				menu_add_option "$profile" "Upload using profile: $profile"
+			done
+			menu_add_separator
+			# Use more contextual text when profiles already exist.
+			menu_add_option "CREATE_PROFILE" "Create another upload profile for '$toolchain_name'..."
 		else
-			log_warn "Could not load toolchain configuration for '$toolchain_name'"
+			menu_add_option "CREATE_PROFILE" "Create new upload profile for '$toolchain_name'..."
+		fi
+
+		menu_add_option "FINISH" "Finish and return to build menu"
+
+		# Use an explicit width to prevent text from being cut off.
+		# Also check the return code to handle ESC/Cancel. A fixed height prevents layout issues.
+		if ! menu_show_list 15 70; then
+			break # User pressed ESC or Cancel
+		fi
+
+		local selection
+		selection="$(menu_get_first_selection)"
+
+		case "$selection" in
+		FINISH | "")
+			break # Exit the post-build menu loop
+			;;
+		CREATE_PROFILE)
+			# Pre-fill the toolchain name in the editor for better UX
+			local new_profile_name
+			new_profile_name=$(ui_edit_ssh_profile "" "$toolchain_name")
+			if [[ -n "$new_profile_name" ]]; then
+				log_info "New profile '$new_profile_name' created. Proceeding with upload."
+				net_upload_cam_profile "$new_profile_name"
+				break # Upload was attempted, exit the post-build menu
+			else
+				log_info "Profile creation was cancelled."
+				# Loop continues, allowing user to choose another option
+			fi
+			;;
+		*)
+			# Any other selection is a profile name
+			net_upload_cam_profile "$selection"
+			break # Exit the loop after performing the upload.
+			;;
+		esac
+	done
+
+	err_pop_context
+}
+
+ui_edit_toolchain_confdir() {
+	local toolchain_name="$1"
+	err_push_context "Edit toolchain confdir for '$toolchain_name'"
+
+	local config_path="$tccfgdir/$toolchain_name"
+	if [[ ! -f "$config_path" ]]; then
+		log_error "Toolchain configuration file not found: $config_path"
+		err_pop_context
+		return 1
+	fi
+
+	# Use Unified Configuration Manager for secure loading and saving
+	if ! cfg_load_file "toolchain" "$config_path"; then
+		log_warn "Could not load toolchain configuration for '$toolchain_name'"
+		err_pop_context
+		return 1
+	fi
+
+	local default_dir current_dir confdir
+	default_dir=$(cfg_get_value "toolchain" "_oscamconfdir_default")
+	current_dir=$(cfg_get_value "toolchain" "_oscamconfdir_custom")
+	[[ "$current_dir" == "not_set" ]] && current_dir=""
+
+	confdir=$(ui_get_input " -[ $toolchain_name Toolchain$(REPOIDENT) ]- " "Enter new CONF_DIR path. Default is '$default_dir'.\nLeave empty to use default." "$current_dir")
+
+	# ui_get_input returns 1 on Cancel/ESC
+	if [[ $? -eq 0 ]]; then
+		if [[ -n "$confdir" ]]; then
+			cfg_set_value "toolchain" "_oscamconfdir_custom" "$confdir"
+		else # User cleared the input, revert to using the default
+			cfg_set_value "toolchain" "_oscamconfdir_custom" "not_set"
+		fi
+
+		if ! cfg_save_file "toolchain" "$config_path"; then
+			ui_show_msgbox "Error" "Failed to save updated toolchain configuration."
 		fi
 	fi
-}
-check_smargo() {
-	build_check_smargo_deps
+	err_pop_context
 }
 build_check_smargo_deps() {
 	if [ -f "${repodir}/config.sh" ]; then
 		if [ "$("${repodir}/config.sh" --enabled CARDREADER_SMARGO)" == "Y" ]; then
-			USE_vars[USE_LIBUSB]="USE_LIBUSB=1"
+			USE_vars[USE_LIBUSB]="1"
 		else
 			USE_vars[USE_LIBUSB]=
 		fi
@@ -330,24 +494,36 @@ build_check_smargo_deps() {
 build_check_streamrelay_deps() {
 	if [ -f "${repodir}/config.sh" ]; then
 		if [ "$("${repodir}/config.sh" --enabled MODULE_STREAMRELAY)" == "Y" ]; then
-			USE_vars[USE_LIBDVBCSA]="USE_LIBDVBCSA=1"
+			USE_vars[USE_LIBDVBCSA]="1"
 		else
 			USE_vars[USE_LIBDVBCSA]=
 		fi
 	fi
 }
-check_signing() {
-	if [ -f "$configdir/sign" ]; then
-		source "$configdir/sign"
-		if [ -f "$x509cert" ] && [ -f "$privkey" ] && [ -f "$repodir/config.sh" ]; then
-			if [ "$("${repodir}/config.sh" --enabled WITH_SIGNING)" == "Y" ]; then
-				"${repodir}/config.sh" --add-cert "$x509cert" "$privkey"
-				printf "$YH\n |   SIGNING : use provided $(basename $x509cert) and $(basename $privkey) files"
-			fi
+build_check_signing() {
+	local sign_config_file="$configdir/sign"
+	if [[ ! -f "$sign_config_file" ]]; then
+		return
+	fi
+
+	# Use UCM instead of directly sourcing the config file for security and consistency.
+	if ! cfg_load_file "sign" "$sign_config_file"; then
+		log_warn "Could not load signing configuration from '$sign_config_file'."
+		return
+	fi
+
+	local x509cert privkey
+	x509cert=$(cfg_get_value "sign" "x509cert")
+	privkey=$(cfg_get_value "sign" "privkey")
+
+	if [[ -f "$x509cert" && -f "$privkey" && -f "$repodir/config.sh" ]]; then
+		if [[ "$("${repodir}/config.sh" --enabled WITH_SIGNING)" == "Y" ]]; then
+			"${repodir}/config.sh" --add-cert "$x509cert" "$privkey"
+			log_info "SIGNING: Using provided $(basename "$x509cert") and $(basename "$privkey") files"
 		fi
 	fi
 }
-set_buildtype() {
+build_set_type() {
 	local toolchain_name="$1"
 	local sysroot_path="$2"
 	local statcount=0
@@ -362,7 +538,7 @@ set_buildtype() {
 	# For each potential static library, check if static linking is requested.
 	# If so, increment libcount. Then try to find the .a file and increment statcount on success.
 
-	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_LIBCRYPTO]}" == "STATIC_LIBCRYPTO=1" ]]; then
+	if [[ "${USE_vars[USE_STATIC]}" == "1" || "${USE_vars[STATIC_LIBCRYPTO]}" == "1" ]]; then
 		((libcount++))
 		local found_lib
 		found_lib=$(find $SEARCHDIR -name "libcrypto.a" -type f -print -quit 2>/dev/null)
@@ -372,7 +548,7 @@ set_buildtype() {
 		fi
 	fi
 
-	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_SSL]}" == "STATIC_SSL=1" ]]; then
+	if [[ "${USE_vars[USE_STATIC]}" == "1" || "${USE_vars[STATIC_SSL]}" == "1" ]]; then
 		((libcount++))
 		local found_lib
 		found_lib=$(find $SEARCHDIR -name "libssl.a" -type f -print -quit 2>/dev/null)
@@ -382,7 +558,7 @@ set_buildtype() {
 		fi
 	fi
 
-	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_LIBUSB]}" == "STATIC_LIBUSB=1" ]]; then
+	if [[ "${USE_vars[USE_STATIC]}" == "1" || "${USE_vars[STATIC_LIBUSB]}" == "1" ]]; then
 		((libcount++))
 		local found_lib
 		found_lib=$(find $SEARCHDIR -name "libusb-1.0.a" -type f -print -quit 2>/dev/null)
@@ -394,7 +570,7 @@ set_buildtype() {
 		LIBUSB_LIB="LIBUSB_LIB=-lusb-1.0"
 	fi
 
-	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_PCSC]}" == "STATIC_PCSC=1" ]]; then
+	if [[ "${USE_vars[USE_STATIC]}" == "1" || "${USE_vars[STATIC_PCSC]}" == "1" ]]; then
 		((libcount++))
 		local found_lib
 		found_lib=$(find $SEARCHDIR -name "libpcsclite.a" -type f -print -quit 2>/dev/null)
@@ -404,7 +580,7 @@ set_buildtype() {
 		fi
 	fi
 
-	if [[ "${USE_vars[USE_STATIC]}" == "USE_STATIC=1" || "${USE_vars[STATIC_LIBDVBCSA]}" == "STATIC_LIBDVBCSA=1" ]]; then
+	if [[ "${USE_vars[USE_STATIC]}" == "1" || "${USE_vars[STATIC_LIBDVBCSA]}" == "1" ]]; then
 		((libcount++))
 		local found_lib
 		found_lib=$(find $SEARCHDIR -name "libdvbcsa.a" -type f -print -quit 2>/dev/null)
@@ -416,17 +592,17 @@ set_buildtype() {
 
 	# Determine buildtype based on counts.
 	if [[ "$statcount" -gt 0 && "$statcount" -lt "$libcount" ]]; then
-		printf "$y_l\n | BUILDTYPE : mixed"
+		log_info "BUILDTYPE: mixed"
 		buildtype="-mixed"
 	elif [[ "$libcount" -gt 0 && "$statcount" -eq "$libcount" ]]; then
-		printf "$y_l\n | BUILDTYPE : static"
+		log_info "BUILDTYPE: static"
 		buildtype="-static"
 	else
-		printf "$y_l\n | BUILDTYPE : dynamic"
+		log_info "BUILDTYPE: dynamic"
 		buildtype=""
 	fi
 }
-build_reset_config() {
+cfg_reset_build_config() {
 	if [ -f "${repodir}/config.sh" ]; then
 		[ -f "$menudir/$_toolchainname.save" ] && rm -rf "$menudir/$_toolchainname.save"
 		if [ ! -f "$ispatched" ]; then
@@ -441,7 +617,7 @@ ui_edit_s3_config() {
 	err_push_context "ui_edit_s3_config"
 
 	# Part 1: Edit S3_LOG_LEVEL using a radiolist for single selection.
-	menu_init "Select Log Level"
+	menu_init "Select Log Level" "Edit SimpleBuild Config"
 	local current_level
 	current_level=$(cfg_get_value "s3" "S3_LOG_LEVEL" "2")
 
@@ -470,7 +646,7 @@ ui_edit_s3_config() {
 		"USE_VERBOSE"
 	)
 
-	menu_init "Enable/Disable SimpleBuild3 Options"
+	menu_init "Enable/Disable SimpleBuild3 Options" "Edit SimpleBuild Config"
 	for option in "${editable_options[@]}"; do
 		local state="off"
 		[[ "$(cfg_get_value "s3" "$option" "0")" == "1" ]] && state="on"
@@ -491,8 +667,8 @@ ui_edit_s3_config() {
 		done
 	fi
 
-	# Part 3: Select OpenSSL version using the new dynamic menu
-	if menu_yes_no "Change OpenSSL version for dependency builds?"; then
+	# Part 3: Select OpenSSL version using the dynamic menu
+	if ui_show_yesno "Change OpenSSL version for dependency builds?"; then
 		# This function handles getting and setting the value
 		ui_select_openssl_version_menu
 	fi
@@ -518,7 +694,7 @@ ui_select_openssl_version_menu() {
 	local current_version
 	current_version=$(cfg_get_value "s3" "S3_OPENSSL_VERSION" "1.1.1w")
 
-	menu_init "Select OpenSSL Version"
+	menu_init "Select OpenSSL Version" "Select OpenSSL Version"
 	for version in "${versions[@]}"; do
 		local state="off"
 		[[ "$version" == "$current_version" ]] && state="on"
@@ -537,161 +713,68 @@ ui_select_openssl_version_menu() {
 	err_pop_context
 	return 0
 }
-ui_show_stapi_menu() {
-	if [[ "$stapi_allowed" != "1" ]]; then
-		ui_show_msgbox "STAPI Info" "STAPI is not available for the '$_toolchainname' toolchain."
-		return
+
+sys_populate_module_and_use_vars() {
+	# This function replaces the fragile _get_config_con parsing.
+	# It populates global variables (addons, protocols, etc.) and USE_vars array keys.
+	err_push_context "Populating module and USE_vars definitions"
+
+	local config_sh_path="${repodir}/config.sh"
+	local makefile_path="${repodir}/Makefile"
+
+	if [[ ! -f "$config_sh_path" ]]; then
+		config_sh_path="$configdir/config.sh.master"
+	fi
+	if [[ ! -f "$makefile_path" ]]; then
+		makefile_path="$configdir/Makefile.master"
 	fi
 
-	menu_init "Select STAPI Mode"
-	menu_add_option "STAPI_OFF" "Disable STAPI" "on"
-	menu_add_option "USE_STAPI" "Enable STAPI" "off"
-	menu_add_option "USE_STAPI5_UFS916" "Enable STAPI5 (UFS916)" "off"
-	menu_add_option "USE_STAPI5_UFS916003" "Enable STAPI5 (UFS916003)" "off"
-	menu_add_option "USE_STAPI5_OPENBOX" "Enable STAPI5 (OPENBOX)" "off"
-
-	if menu_show_radiolist; then
-		local selection
-		selection="$(menu_get_first_selection)"
-
-		stapivar=''
-		addstapi=
-		usevars=$(echo "$usevars" | sed "s@USE_STAPI5@@" | xargs)
-		usevars=$(echo "$usevars" | sed "s@USE_STAPI@@" | xargs)
-
-		case "$selection" in
-		STAPI_OFF) stapivar= ;;
-		USE_STAPI)
-			[ -z "$stapi_lib_custom" ] && stapivar="STAPI_LIB=$sdir/stapi/liboscam_stapi.a" || stapivar="STAPI_LIB=$sdir/stapi/${stapi_lib_custom}"
-			addstapi="USE_STAPI"
-			;;
-		USE_STAPI5_UFS916)
-			stapivar="STAPI5_LIB=$sdir/stapi/liboscam_stapi5_UFS916.a"
-			addstapi="USE_STAPI5"
-			;;
-		USE_STAPI5_UFS916003)
-			stapivar="STAPI5_LIB=$sdir/stapi/liboscam_stapi5_UFS916_0.03.a"
-			addstapi="USE_STAPI5"
-			;;
-		USE_STAPI5_OPENBOX)
-			stapivar="STAPI5_LIB=$sdir/stapi/liboscam_stapi5_OPENBOX.a"
-			addstapi="USE_STAPI5"
-			;;
-		esac
-
-		cfg_save_build_profile
+	if [[ ! -f "$config_sh_path" ]]; then
+		log_warn "Could not find config.sh or master copy. Module lists will be empty."
+		err_pop_context
+		return 1
 	fi
-}
-cfg_save_build_profile() {
-	usevars=
-	enabled=
-	disabled=
-	build_check_smargo_deps
-	enabled=($("${repodir}/config.sh" -s))
-	disabled=($("${repodir}/config.sh" -Z))
-	[ "$_toolchainname" == "sh4" ] && silent=$("${repodir}/config.sh" --disable WITH_COMPRESS)
-	[ "$_toolchainname" == "sh_4" ] && silent=$("${repodir}/config.sh" --disable WITH_COMPRESS)
-	unset USE_vars[USE_STAPI]
-	unset USE_vars[USE_STAPI5]
 
-	for e in ${USE_vars[*]}; do
-		usevars="${e:0:-2} $usevars"
-	done
-
-	[ -f "$menudir/$_toolchainname.save" ] && rm -rf "$menudir/$_toolchainname.save"
-	printf "enabled=\"${enabled[*]}\"\n" >"$menudir/$_toolchainname.save"
-	printf "disabled=\"${disabled[*]}\"\n" >>"$menudir/$_toolchainname.save"
-	if [ "$stapi_allowed" == "1" ]; then
-		if [ "${#stapivar}" -gt "15" ]; then
-			printf "stapivar=\"$stapivar\"\n" >>"$menudir/$_toolchainname.save"
-			printf "usevars=\"$usevars $addstapi\"\n" >>"$menudir/$_toolchainname.save"
-		else
-			printf "usevars=\"$usevars\"\n" >>"$menudir/$_toolchainname.save"
-		fi
+	# Safely extract and evaluate the module list definitions from config.sh
+	# This is safer than sourcing a file fragment with potential executable code.
+	# It extracts lines like `addons="..."` and evaluates them in the current shell.
+	local definitions
+	definitions=$(grep -E '^(addons|protocols|readers|card_readers)=' "$config_sh_path")
+	if [[ -n "$definitions" ]]; then
+		# The globals `addons`, `protocols`, etc. are intentionally set here
+		# for consumption by the legacy _create_module_arrays function.
+		eval "$definitions"
 	else
-		printf "usevars=\"$usevars\"\n" >>"$menudir/$_toolchainname.save"
+		log_warn "Could not extract module definitions from '$config_sh_path'."
 	fi
-}
-load_config() {
-	_stapi=
-	_stapi5=
-	enabled=
-	disabled=
-	stapivar=""
-	USESTRING=
-	usevars=
-	unset USE_vars[USE_STAPI]
-	unset USE_vars[USE_STAPI5]
-	if [ -f "$menudir/$_toolchainname.save" ]; then
-		source "$menudir/$_toolchainname.save"
-		ena=$("${repodir}/config.sh" -E $enabled)
-		dis=$("${repodir}/config.sh" -D $disabled)
-		for e in $usevars; do
-			USE_vars[$e]="$e=1"
-			[ "$e" == "USE_LIBUSB" ] && silent=$("${repodir}/config.sh" --enable CARDREADER_SMARGO)
-		done
-	else
-		build_reset_config
-		[ "${s3cfg_vars[USE_TARGZ]}" == "1" ] && USE_vars[USE_TARGZ]="USE_TARGZ=1"
-		for e in $default_use; do
-			USE_vars[$e]="$e=1"
-		done
-	fi
-	check_smargo
-	build_check_streamrelay_deps
-	[ "$_toolchainname" == "sh4" ] && silent=$("${repodir}/config.sh" --disable WITH_COMPRESS)
-	[ "$_toolchainname" == "sh_4" ] && silent=$("${repodir}/config.sh" --disable WITH_COMPRESS)
-	USESTRING="$(echo "${USE_vars[@]}" | sed 's@USE_@@g' | sed 's@=1@@g' | tr -s ' ')"
-}
-_get_config_con() {
-	if [ ! "$1" == "checkout" ] && [ ! "$1" == "clean" ]; then
-		tmp="$(mktemp)"
 
-		if [ -f "${repodir}/config.sh" ]; then
-			while read -r _l; do
-				c=$(echo "$_l" | tr -cd \" | wc -c)
-				_c=$((_c + c))
-				[ ${_c} -lt 11 ] && echo "$_l" >>"$tmp"
-				[ ${_c} -eq 10 ] && break
-			done <"${repodir}/config.sh"
-		else
-			while read -r _l; do
-				c=$(echo "$_l" | tr -cd \" | wc -c)
-				_c=$((_c + c))
-				[ ${_c} -lt 11 ] && echo "$_l" >>"$tmp"
-				[ ${_c} -eq 10 ] && break
-			done <"$configdir/config.sh.master"
-		fi
-
-		if [ -f "${repodir}/Makefile" ]; then
-			str_="$(grep '^   USE_' "${repodir}/Makefile" | sort -u | awk '{print $1}')"
-			for e in $str_; do
-				es="${e:0:-2}"
-				USE_vars[$es]=
-			done
-		else
-			if [ -f "$configdir/Makefile.master" ]; then
-				str_="$(grep '^   USE_' "$configdir/Makefile.master" | sort -u | awk '{print $1}')"
-				for e in $str_; do
-					es="${e:0:-2}"
-					USE_vars[$es]=
-				done
+	# Populate USE_vars array keys from the Makefile
+	if [[ -f "$makefile_path" ]]; then
+		local use_var_keys
+		# Extracts 'USE_...' keys from the Makefile.
+		mapfile -t use_var_keys < <(grep '^ *USE_' "$makefile_path" | sort -u | awk '{print $1}' | sed 's/://')
+		for key in "${use_var_keys[@]}"; do
+			# Initialize the key in the associative array if it's not already set.
+			# This preserves any values set by profiles or CLI args.
+			if ! [[ -v "USE_vars[$key]" ]]; then
+				USE_vars[$key]=""
 			fi
-		fi
-
-		check_smargo
-		build_check_streamrelay_deps
-		source "$tmp"
-		rm -rf "$tmp" "$tmp1"
-		rm -rf "$tmp.load" "$tmp1.load"
+		done
+	else
+		log_warn "Could not find Makefile or master copy. USE_vars list will be incomplete."
 	fi
+
+	# These checks modify USE_vars based on module selections and must be run after population.
+	build_check_smargo_deps
+	build_check_streamrelay_deps
+
+	log_debug "Module and USE_vars lists populated."
+	err_pop_context
+	return 0
 }
 
-version() {
+sys_show_version() {
 	echo -e "${SIMPLEVERSION}.${VERSIONCOUNTER} by ${DEVELOPER}\n- in memory of gorgone -"
-}
-tcupdate() {
-	plugin_run_toolchain_updater "$1" "$2" "$3" "$4"
 }
 
 sys_initialize_environment() {
@@ -764,11 +847,7 @@ sys_initialize_environment() {
 		fi
 	done
 
-	# Load default repository URLs securely
-	log_info "Loading default repository URLs."
-	if ! cfg_load_file "urls" "$configdir/urls"; then
-		log_fatal "Could not load core URL configuration from '$configdir/urls'." "$EXIT_INVALID_CONFIG"
-	fi
+	# URLs are loaded in the main s3 script via source and manual cfg_set_value calls
 
 	err_pop_context
 }

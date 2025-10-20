@@ -1,6 +1,6 @@
 #!/bin/bash
 
-_fill_tc_array() {
+toolchain_fill_arrays() {
 	unset AVAI_TCLIST
 	unset INST_TCLIST
 	tcempty=0
@@ -9,7 +9,7 @@ _fill_tc_array() {
 	if [ "$(ls -A "$tccfgdir")" ]; then
 		AVAI_TCLIST=(*)
 	else
-		printf "\n error in _fill_tc_array()\n please report error\n\n"
+		printf "\n error in toolchain_fill_arrays()\n please report error\n\n"
 		exit
 	fi
 
@@ -36,7 +36,7 @@ _fill_tc_array() {
 	fi
 }
 
-_create_module_arrays() {
+module_create_arrays() {
 	# Clear arrays to ensure a clean state on re-runs
 	SHORT_ADDONS=() SHORT_PROTOCOLS=() SHORT_READERS=() SHORT_CARD_READERS=()
 	SHORT_MODULENAMES=() ALL_MODULES_LONG=()

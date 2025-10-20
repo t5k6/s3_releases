@@ -4,82 +4,62 @@
 source "$fdir/_ansi.sh"
 
 sys_check_binaries() {
-	# Optimized binary checking with caching and reduced find operations
-	err_init "Binary system check"
+	err_push_context "sys_check_binaries"
 	local output_mode="${1:-verbose}" # verbose/silent/summary
-	local binary_cache="/tmp/s3_binary_cache_$BASHPID"
 
-	sys_check_output "$output_mode" "$w_l\n  CHECK for binaries\n  ==================$re_\n"
-
-	# Setup caching to avoid repeated binary detection
-	local cached_bins=""
-	if [ -f "$binary_cache" ]; then
-		cached_bins=$(cat "$binary_cache")
+	if [[ "$output_mode" == "verbose" ]]; then
+		log_header "CHECK for binaries"
 	fi
 
 	local failed_bins=()
-	local found_bins=()
 
 	for binary in "${binvars[@]}"; do
 		local binary_path=""
 
-		# Check cache first
-		if [ -n "$cached_bins" ]; then
-			binary_path=$(echo "$cached_bins" | grep "^$binary:" | cut -d':' -f2)
-		fi
-
-		# If not in cache or cache miss, check system
-		if [ -z "$binary_path" ]; then
-			if [ "$binary" = "autoconf-archive" ]; then
-				# Special case for autoconf-archive, which is a collection of m4 files, not an executable.
-				# We check for a known file's existence in common locations instead of an executable path.
-				for aclocal_dir in /usr/share/aclocal /usr/local/share/aclocal; do
-					if [ -f "$aclocal_dir/ax_absolute_header.m4" ]; then
-						binary_path="$aclocal_dir/ax_absolute_header.m4"
-						break
-					fi
-				done
-			else
-				binary_path=$(type -pf "$binary" 2>/dev/null || which "$binary" 2>/dev/null || echo "")
-			fi
+		if [ "$binary" = "autoconf-archive" ]; then
+			# Special case for autoconf-archive, which is a collection of m4 files, not an executable.
+			# We check for a known file's existence in common locations instead of an executable path.
+			for aclocal_dir in /usr/share/aclocal /usr/local/share/aclocal; do
+				if [ -f "$aclocal_dir/ax_absolute_header.m4" ]; then
+					binary_path="$aclocal_dir/ax_absolute_header.m4"
+					break
+				fi
+			done
+		else
+			binary_path=$(type -pf "$binary" 2>/dev/null || which "$binary" 2>/dev/null || echo "")
 		fi
 
 		if [ -n "$binary_path" ] && { [ "$binary" = "autoconf-archive" ] || [ -x "$binary_path" ]; }; then
 			printf -v pad %40s
 			binary_display="${binary}${pad}"
 			binary_display="${binary_display:0:16}"
-			sys_check_output "$output_mode" "$w_l  have\t$g_l${binary_display} $y_l$binary_path$re_\n"
-			found_bins+=("$binary:$binary_path")
+			sys_check_output "$output_mode" "  have\t$g_l${binary_display} $y_l$binary_path$re_"
 		else
 			printf -v pad %40s
 			binary_display="${binary}${pad}"
 			binary_display="${binary_display:0:16}"
-			sys_check_output "$output_mode" "$r_l  need\t$w_l${binary_display} $r_l(not found)$re_\n"
+			sys_check_output "$output_mode" "  need\t$w_l${binary_display} $r_l(not found)$re_"
 			failed_bins+=("$binary")
 		fi
 	done
 
-	# Cache successful finds
-	printf "%s\n" "${found_bins[@]}" >"$binary_cache"
-
-	# Return the number of failures as the exit code. 0 means success.
+	err_pop_context
 	return ${#failed_bins[@]}
 }
 
 sys_check_headers() {
-	# Optimized header file checking with reduced filesystem operations
-	err_init "Header system check"
+	err_push_context "sys_check_headers"
 	local output_mode="${1:-verbose}" # verbose/silent/summary
-	local header_cache="/tmp/s3_header_cache_$BASHPID"
 
-	sys_check_output "$output_mode" "$w_l\n  CHECK for headers\n  =================$re_\n"
+	if [[ "$output_mode" == "verbose" ]]; then
+		log_header "CHECK for headers"
+	fi
 
 	# Define search paths once
 	local search_paths=("/usr/include" "/usr/local/include")
 	[ -n "${SYSROOT:-}" ] && search_paths+=("${SYSROOT}/usr/include")
 
 	local failed_headers=()
-	local found_headers=()
 
 	for header in "${headervars[@]}"; do
 		local header_found="false"
@@ -87,7 +67,7 @@ sys_check_headers() {
 
 		# Special handling for dvbcsa.h with config override
 		if [ "$header" = "dvbcsa.h" ] && [ "$(cfg_get_value "s3" "INSTALL_NATIVE_LIBDVBCSA" "1")" = "0" ]; then
-			sys_check_output "$output_mode" "$r_l  need\t$w_l${header} $r_l (skipped by config)$re_\n"
+			sys_check_output "$output_mode" "  need\t$w_l${header} $r_l (skipped by config)$re_"
 			failed_headers+=("$header(config_skipped)")
 			continue
 		fi
@@ -112,31 +92,26 @@ sys_check_headers() {
 		header_display="${header_display:0:16}"
 
 		if [ "$header_found" = "true" ] && [ -n "$header_path" ]; then
-			sys_check_output "$output_mode" "$w_l  have\t$g_l${header_display} $y_l$header_path$re_\n"
-			found_headers+=("$header:$header_path")
+			sys_check_output "$output_mode" "  have\t$g_l${header_display} $y_l$header_path$re_"
 		else
-			sys_check_output "$output_mode" "$r_l  need\t$w_l${header_display} $r_l(not found)$re_\n"
+			sys_check_output "$output_mode" "  need\t$w_l${header_display} $r_l(not found)$re_"
 			failed_headers+=("$header")
 		fi
 	done
 
-	# Cache successful finds
-	printf "%s\n" "${found_headers[@]}" >"$header_cache"
-
-	# Return the number of failures as the exit code. 0 means success.
+	err_pop_context
 	return ${#failed_headers[@]}
 }
 
 sys_check_libraries() {
-	# Optimized library checking with intelligent caching
-	err_init "Library system check"
+	err_push_context "sys_check_libraries"
 	local output_mode="${1:-verbose}" # verbose/silent/summary
-	local lib_cache="/tmp/s3_lib_cache_$BASHPID"
 
-	sys_check_output "$output_mode" "$w_l\n  CHECK for libraries\n  ===================$re_\n"
+	if [[ "$output_mode" == "verbose" ]]; then
+		log_header "CHECK for libraries"
+	fi
 
 	local failed_libs=()
-	local found_libs=()
 
 	for lib in "${libvars[@]}"; do
 		# Use find with more targeted search
@@ -148,17 +123,18 @@ sys_check_libraries() {
 		lib_display="${lib_display:0:16}"
 
 		if [ -n "$lib_path" ]; then
-			sys_check_output "$output_mode" "$w_l  have\t$g_l${lib_display} $y_l$lib_path$re_\n"
-			found_libs+=("$lib:$lib_path")
+			sys_check_output "$output_mode" "  have\t$g_l${lib_display} $y_l$lib_path$re_"
 		else
-			sys_check_output "$output_mode" "$r_l  need\t$w_l${lib_display} $r_l(not found)$re_\n"
+			sys_check_output "$output_mode" "  need\t$w_l${lib_display} $r_l(not found)$re_"
 			failed_libs+=("$lib")
 		fi
 	done
 
 	# Special x86_64 zlib32 check
 	if [ "$(uname -m)" = "x86_64" ]; then
-		sys_check_output "$output_mode" "$w_l\n  CHECK for zlib32\n  ================$re_\n"
+		if [[ "$output_mode" == "verbose" ]]; then
+			log_header "CHECK for zlib32"
+		fi
 		local zlib32_found="false"
 		local zlib32_path=""
 
@@ -171,17 +147,14 @@ sys_check_libraries() {
 		fi
 
 		if [ "$zlib32_found" = "true" ]; then
-			sys_check_output "$output_mode" "$w_l  have\t$g_l zlib32  $y_l$zlib32_path$re_\n"
+			sys_check_output "$output_mode" "  have\t$g_l zlib32  $y_l$zlib32_path$re_"
 		else
-			sys_check_output "$output_mode" "$r_l  need\t$w_l zlib32  $r_l(not found)$re_\n"
+			sys_check_output "$output_mode" "  need\t$w_l zlib32  $r_l(not found)$re_"
 			failed_libs+=("zlib32")
 		fi
 	fi
 
-	# Cache successful finds
-	printf "%s\n" "${found_libs[@]}" >"$lib_cache"
-
-	# Return the number of failures as the exit code. 0 means success.
+	err_pop_context
 	return ${#failed_libs[@]}
 }
 
@@ -193,17 +166,13 @@ sys_check_output() {
 
 	case "$mode" in
 	"verbose")
-		printf "%s" "$message" >&2
+		log_plain "$message"
 		;;
-	"silent")
+	"silent" | "summary")
 		: # No output
 		;;
-	"summary")
-		# Could collect for later summary output
-		: # For now, same as silent
-		;;
 	*)
-		printf "%s" "$message" >&2
+		log_plain "$message"
 		;;
 	esac
 }
@@ -230,60 +199,72 @@ sys_get_distro_installer() {
 #   syscheck debian_os
 #     call installer 'debian_os' (Do not care about the actual Linux distribution.)
 
-syscheck() {
+sys_run_checks_interactive() {
 	[[ $1 ]] && [ "$1" != "auto" ] && override="$1"
 	now=$2
-	if [ -d "$osdir" ]; then
-		cd "$osdir" || return 1
-		x=(*)
-		for i in "${x[@]}"; do
-			source "$i"
-		done
+
+	# Load checklists from config file using UCM
+	if ! cfg_load_file "syscheck_defaults" "$configdir/syscheck.defaults"; then
+		log_error "Failed to load syscheck defaults from $configdir/syscheck.defaults"
+		return 1
 	fi
 
 	unset binvars
 	unset headervars
 	unset libvars
-	mapfile -t binvars < <(echo "${3:-dialog grep gawk wget tar bzip2 git bc xz upx patch gcc g++ make automake autoconf autoconf-archive libtool jq scp sshpass openssl dos2unix curl}" | tr ' ' '\n')
-	mapfile -t headervars < <(echo "${4:-crypto.h libusb.h pcsclite.h pthread.h opensslconf.h dvbcsa.h}" | tr ' ' '\n')
-	mapfile -t libvars < <(echo "${5:-libccidtwin.so}" | tr ' ' '\n')
-	sanity=1
+	mapfile -t binvars < <(cfg_get_value "syscheck_defaults" "BINARIES" "dialog grep gawk wget tar bzip2 git bc xz upx patch gcc g++ make automake autoconf autoconf-archive libtool jq scp sshpass openssl dos2unix curl" | tr ' ' '\n')
+	mapfile -t headervars < <(cfg_get_value "syscheck_defaults" "HEADERS" "crypto.h libusb.h pcsclite.h pthread.h opensslconf.h dvbcsa.h" | tr ' ' '\n')
+	mapfile -t libvars < <(cfg_get_value "syscheck_defaults" "LIBRARIES" "libccidtwin.so" | tr ' ' '\n')
 
-	if ! sys_run_check || [ "$now" == "now" ]; then
-		clear
-		s3logo
+	# If checks pass and we are not forced, exit successfully.
+	if sys_run_check && [[ "$now" != "now" ]]; then
+		log_info "All system prerequisites are met."
+		return 0
+	fi
+
+	err_push_context "Interactive System Check & Install"
+	log_header "Running Interactive System Check"
+
+	if [[ "$now" == "now" ]] || ! sys_run_check; then
 		# Rerun checks in verbose mode to show the user what is missing
 		sys_check_binaries "verbose"
 		sys_check_headers "verbose"
 		sys_check_libraries "verbose"
-		sanity=0
+
 		rootuser="$(ps -jf 1 | tail -n 1 | awk '{print $1}')"
 		if [ "$EUID" -ne 0 ]; then
 			! hash "sudo" 2>/dev/null && prefix="su $rootuser -c" || prefix="sudo sh -c"
 		else
 			prefix="sh -c"
 		fi
+
 		# Abstracted OS detection
 		local installer
 		installer=$(sys_get_distro_installer)
 
 		# Optional override via parameter
 		[[ -n "$override" ]] && installer="$override"
-		printf '\n%s  Selected installer:    %s\n' "$w_l" "$P$installer"
+		log_info "Selected installer: $installer"
 
-		if type -t "$installer" >/dev/null; then
-			$installer && sys_run_check && sanity=1
-		else
-			printf '\n%s  Needs manual installation.\n' "$r_l"
+		if ! type -t "$installer" >/dev/null; then
+			log_error "Installer '$installer' not found. Needs manual installation."
+			err_pop_context
+			return 1
 		fi
 
-		printf '%s\n' "$re_"
+		if validate_command "Running package installer for '$installer'" "$installer" && sys_run_check; then
+			log_info "All dependencies are now met."
+			err_pop_context
+			return 0
+		fi
 	fi
 
-	return $sanity
+	log_error "Installation ran, but some dependencies are still missing."
+	err_pop_context
+	return 1
 }
 
-upx_native_installer() {
+sys_install_upx() {
 	err_push_context "upx_native_installer"
 	log_info "Installing upx precompiled binary..."
 	local host_arch
@@ -314,7 +295,7 @@ upx_native_installer() {
 	err_pop_context
 }
 
-libdvbcsa_native_installer() {
+sys_install_libdvbcsa() {
 	err_push_context "libdvbcsa_native_installer"
 	log_info "Installing libdvbcsa from source..."
 	local src_dir="/tmp/libdvbcsa"
@@ -374,9 +355,6 @@ sys_run_check() {
 
 	sys_check_libraries "$output_mode"
 	total_failures=$((total_failures + $?))
-
-	# Clean up caches created by the checks
-	rm -f "/tmp/s3_"*"_cache_$BASHPID"
 
 	return $total_failures
 }

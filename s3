@@ -1,17 +1,25 @@
 #!/bin/bash
 
 SIMPLEVERSION="2024.07"
-VERSIONCOUNTER="$(git rev-list --count HEAD 2>/dev/null || printf "$(echo "$SIMPLEVERSION" | sed -e 's/\(.\)/\1\+0/g' | bc)_non-git")"
+VERSIONCOUNTER="$(git rev-list --count HEAD 2>/dev/null || echo "non-git")"
 DEVELOPER="Gorgone, WXbet"
-OIFS=$IFS
-export NCURSES_NO_UTF8_ACS=1
+export NCURSES_NO_UTF8_ACS=1 # Required for dialog compatibility in some terminals
 
 here_=$(pwd)
-realdir=$(readlink -f $0)
-cd "$(dirname $realdir)"
+realdir=$(readlink -f "$0")
+cd "$(dirname "$realdir")" || exit 1
 
 #set dir_vars
 workdir="$(pwd)"
+
+# Ensure SimpleBuild3 is running from a Git repository for safety
+if [[ ! -d "$workdir/.git" ]]; then
+	echo "ERROR: SimpleBuild3 must be run from a Git repository."
+	echo "Please clone the repository using: git clone <repository-url>"
+	echo "Or ensure you are running from the correct directory."
+	exit 1
+fi
+
 sdir="$workdir/support"
 osdir="$sdir/os"
 ldir="$sdir/logs"
@@ -29,36 +37,19 @@ tcdir="$sdir/toolchains"
 tdir="$sdir/translation"
 tccfgdir="$sdir/toolchains.cfg"
 
-# create folders
-mkdir -p "$tcdir/native/bin" 2>/dev/null
-mkdir -p $sdir/{archive,binaries,downloads,software,logs,patches,backup_repo,menu_save} 2>/dev/null
-[ -f $sdir/patches/no.patch ] && rm -f $sdir/patches/no.patch 2>/dev/null
+# Initialize error handling
+source "$fdir/_error_handling.sh"
+source "$fdir/_config_management.sh"
+source "$fdir/_misc.sh"
+err_setup
 
-# some migrations of deprecated directories
-for migdir in backup_svn backup_git; do
-	if [ -d "$sdir/$migdir" ]; then
-		shopt -s dotglob
-		mv -f "$sdir/$migdir"/* "$brepo/" 2>/dev/null
-		shopt -u dotglob
-		mv "$brepo/last.tar.gz" "$brepo/last${migdir: -3}.tar.gz" 2>/dev/null
-		ln -fs "$(readlink "$brepo/last${migdir: -3}.tar.gz" | awk -F'/' '{ print $NF }')" "$brepo/last${migdir: -3}.tar.gz"
-		rm -d "$sdir/$migdir"
-	fi
-done
-
-# create links
-[ ! -d "$ldir" ] && clear && echo -e "\n folder creation error\n\n" && exit
-[ -L "$workdir/logs" ] || ln -frs "$ldir" "$workdir/logs" 2>/dev/null
-[ -L "$workdir/archive" ] || ln -frs "$adir" "$workdir/archive" 2>/dev/null
-[ -L "$workdir/patches" ] || ln -frs "$pdir" "$workdir/patches" 2>/dev/null
-[ -L "$workdir/binaries" ] || ln -frs "$bdir" "$workdir/binaries" 2>/dev/null
-[ -L "$workdir/software" ] || ln -frs "$sodir" "$workdir/software" 2>/dev/null
-[ -L "$workdir/profiles" ] || ln -frs "$profdir" "$workdir/profiles" 2>/dev/null
+# Initialize system environment
+sys_initialize_environment
 
 #set arrays
 array_names_a=(SHORT_PROTOCOLS SHORT_READERS SHORT_CARD_READERS AVAI_TCLIST
 	MISS_TCLIST SHORT_ADDONS DISABLED_MODULES SHORT_MODULENAMES
-	ALL_MODULES_LONG ENABLED_MODULES INST_TCLIST SSH_CONF_CONTENT)
+	ALL_MODULES_LONG ENABLED_MODULES INST_TCLIST SSH_CONF_CONTENT module_configs)
 array_names_A=(INTERNAL_MODULES USE_vars USE_vars_disable S3_CONFIGS)
 
 for a_n in "${array_names_a[@]}"; do
@@ -86,8 +77,23 @@ USE_vars[STATIC_PCSC]=
 USE_vars[STATIC_LIBDVBCSA]=
 USE_vars[USE_OSCAMNAME]=
 
-source "$fdir/_error_handling.sh"
-source "$fdir/_config_management.sh"
+# Private helper to check if a toolchain is available
+_sys_is_available_toolchain() {
+	local name="$1"
+	for t in "${AVAI_TCLIST[@]}"; do
+		[[ "$t" == "$name" ]] && return 0
+	done
+	return 1
+}
+
+# Private helper to check if a toolchain is installed
+_sys_is_installed_toolchain() {
+	local name="$1"
+	for t in "${INST_TCLIST[@]}"; do
+		[[ "$t" == "$name" ]] && return 0
+	done
+	return 1
+}
 
 cfg_set_value "s3" "USE_TARGZ" "0"
 cfg_set_value "s3" "DIRECTMENU" "0"
@@ -124,6 +130,25 @@ file_exist="0"
 loadprofile="no"
 s3cfg="$configdir/simplebuild.config"
 
+# Apply any SOURCE-based override
+repo_apply_source_override() {
+	if [[ -z "$SOURCE" ]]; then
+		return 0
+	fi
+
+	local forced_url_key="trunkurl$SOURCE"
+	local forced_url_val
+	forced_url_val=$(cfg_get_value "urls" "$forced_url_key")
+
+	if [[ -n "$forced_url_val" ]]; then
+		log_info "Overriding repository URL with '$forced_url_key' from environment."
+		cfg_set_value "repo" "URL_OSCAM_REPO" "$forced_url_val"
+	else
+		log_warn "Environment variable SOURCE='$SOURCE' was set, but key '$forced_url_key' not found in URL configs."
+		unset SOURCE
+	fi
+}
+
 # Compiler settings
 cc_warn="-W -Wall -Wshadow -Wredundant-decls -Wstrict-prototypes -Wold-style-definition"
 #compiling options for minimize cpu load
@@ -133,8 +158,10 @@ cc_opts="-ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -f
 #compiling options for optimizing
 #cc_opts="-ggdb -pipe -ffunction-sections -fdata-sections -o nodeadcode -ffast-math -fomit-frame-pointer -fthread-jumps -foptimize-strlen --no-inline"
 
-#load default urls
-source "$configdir/urls"
+# Load default URLs securely via UCM
+if ! cfg_load_file "urls" "$configdir/urls"; then
+	log_fatal "Failed to load default URLs from $configdir/urls" "$EXIT_MISSING"
+fi
 
 # Load custom URLs using UCM
 if [ -f "$workdir/oscamsource.url" ]; then
@@ -142,305 +169,332 @@ if [ -f "$workdir/oscamsource.url" ]; then
 	cfg_load_file "urls" "$workdir/oscamsource.url"
 fi
 
-# Switch trunkurl based on environment variable SOURCE
-if [[ -n "$SOURCE" ]]; then
-	forced_url_key="trunkurl$SOURCE"
-	forced_url_val=$(cfg_get_value "urls" "$forced_url_key")
-	if [[ -n "$forced_url_val" ]]; then
-		log_info "Overriding repository URL with '$forced_url_key' from environment."
-		URL_OSCAM_REPO="$forced_url_val" # Overwrite the global directly
-	else
-		log_warn "Environment variable SOURCE='$SOURCE' was set, but key '$forced_url_key' not found in URL configs."
-		unset SOURCE
-	fi
-fi
+# Apply any SOURCE-based override
+repo_apply_source_override
+
+# Set the global URL_OSCAM_REPO from UCM (default or overridden)
+URL_OSCAM_REPO=$(cfg_get_value "repo" "URL_OSCAM_REPO" "$(cfg_get_value "urls" "URL_OSCAM_REPO")")
 
 #load translationlist
-cd "$tdir"
+cd "$tdir" || exit 1
 langsupport=(*)
 
 #load functions and plugins
 if [ -d "$fdir" ]; then
-	cd "$fdir"
+	cd "$fdir" || exit 1
 	x=(*)
 	for i in "${x[@]}"; do
 		# Skip config_management.sh as it's already sourced above, and only source .sh files
-		# Also skip the new build pipeline, as it's called by the wrappers.
-		if [ "$i" != "_config_management.sh" ] && [ "$i" != "_build_pipeline.sh" ] && [[ "$i" == *.sh ]]; then
-			source "$i"
-			plugin=$(awk '/^#simplebuild_plugin/ {printf $2}' $i)
-			[ -z "$plugin" ] || s3opts+=($plugin)
+		if [ "$i" != "_config_management.sh" ] && [[ "$i" == *.sh ]]; then
+			source "./$i"
+			plugin=$(awk '/^#simplebuild_plugin/ {printf $2}' "$i")
+			[ -z "$plugin" ] || s3opts+=("$plugin")
 		fi
 	done
-
-	source "$fdir/_build_pipeline.sh"
 else
-	echo "fail functions"
+	log_fatal "Functions directory '$fdir' not found. Critical failure." "$EXIT_MISSING"
 fi
 
 #set additional dir_vars
-REPO="$(REPOTYPE)"
-ID="$(echo "$(REPOIDENT)" | tr ' ' '-')"
+REPO="$(repo_get_type)"
+ID_SUFFIX="$(repo_get_identifier)"
+if [[ -n "$ID_SUFFIX" ]]; then
+	ID="-$ID_SUFFIX"
+fi
 repodir="$workdir/oscam-${REPO}${ID}"
 ispatched="$workdir/${REPO^^}${ID}-IS-PATCHED"
 
 #software build support
 if [ -d "$sodir" ]; then
-	cd "$sodir"
+	cd "$sodir" || exit 1
 	x=(*)
 	for i in "${x[@]}"; do
 		if [ -f "$i" ] && [[ "$i" == *.sh ]]; then
-			source "$i"
-			plugin=$(awk '/^#simplebuild_plugin/ {printf $2}' $i)
-			[ -z "$plugin" ] || s3opts+=($plugin)
+			source "./$i"
+			plugin=$(awk '/^#simplebuild_plugin/ {printf $2}' "$i")
+			[ -z "$plugin" ] || s3opts+=("$plugin")
 		fi
 	done
 fi
 
 #initialize simplebuild
-initializeANSI # load colors
-auto_langset   # echo "info $txt_load_ok";
+initializeANSI     # load colors
+sys_language_apply # echo "info $txt_load_ok";
 # read simplebuild config
 cfg_load_file "s3" "$s3cfg"
 S3_LOG_LEVEL=$(cfg_get_value "s3" "S3_LOG_LEVEL" "2")
 
 # Create a unique log file for this specific run.
-MAIN_LOG_FILE="$ldir/s3_run_$(date +%F_%H-%M-%S)_$$.log"
-
-# --- GLOBAL LOGGING REDIRECTION ---
-# The sed command strips ANSI escape codes (colors, cursor movement, etc.)
-# before writing to the log file, ensuring it is clean plain text.
-# The console output from tee remains untouched, preserving colors.
-ansi_stripper_cmd="sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g'"
-
-# Redirect stdout and stderr through tee. One stream goes to the console (raw),
-# the other is piped through the ANSI stripper and appended to the log file.
-exec > >(tee >(eval "$ansi_stripper_cmd" >>"$MAIN_LOG_FILE")) \
-2> >(tee >(eval "$ansi_stripper_cmd" >>"$MAIN_LOG_FILE") >&2)
+export MAIN_LOG_FILE="$ldir/s3_run_$(date +%F_%H-%M-%S)_$$.log"
+echo "--- SimpleBuild3 Run Started: $(date) ---" >"$MAIN_LOG_FILE"
 
 log_info "Global logging initiated. Full output is being captured in: $MAIN_LOG_FILE"
 
-build_run_from_cli() {
+# - `_cmd_build` is the actual pipeline runner. This function is responsible for
+#   parsing the command-line arguments and setting up the global state (`module_configs`,
+#   `USE_vars`, etc.) that the build pipeline consumes.
+_s3_run_cli_build() {
 	local toolchain_name="$1"
 	shift
+
+	# Process all arguments
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
-		-p=* | -P=*)
-			pf_name="${arg#*=}"
-			if [ -f "$profdir/$pf_name" ]; then
-				pf=$(cat "$profdir/$pf_name")
+		-p=*)
+			local loaded_profile_name="${arg#*=}"
+			local profile_path="$profdir/$loaded_profile_name"
+
+			if [[ -f "$profile_path" ]]; then
+				log_info "Loading legacy profile '$loaded_profile_name' from CLI..."
+				# This loads a space-separated list of flags into a single variable
+				local profile_flags
+				profile_flags=$(cat "$profile_path")
+				for flag in $profile_flags; do
+					# Recursively call argument handler
+					_s3_process_cli_arg "$flag"
+				done
+			else
+				log_error "Profile '$loaded_profile_name' not found in $profdir"
 			fi
 			;;
-		-c=* | -C=*)
+		-c=*)
 			CUSTOM_CONFDIR="${arg#*=}"
-			;;
-		*on | *off)
-			all_cc+=("$arg")
+			log_debug "Custom confdir set to: $CUSTOM_CONFDIR"
 			;;
 		*)
-			# Handle USE_vars
-			for uvar in "${!USE_vars[@]}"; do
-				if [ "$arg" == "$uvar" ]; then
-					USE_vars[$uvar]="$uvar=1"
-					shift
-					continue
-				fi
-			done
-			# Add to all_cc if not handled?
-			all_cc+=("$arg")
+			_s3_process_cli_arg "$arg"
 			;;
 		esac
 		shift
 	done
-	if [ "$pf_name" != "not_set" ] && [ "$pf" != "empty" ]; then
-		# Handle profile by parsing pf as additional cmds, prepend all_off
-		for cmd in all_off $pf; do
-			# Parse as before, but simplified
-			if [[ "$cmd" == *on || "$cmd" == *off ]]; then
-				all_cc+=("$cmd")
-			fi
-		done
+
+	log_debug "Building with toolchain '$toolchain_name', ${#module_configs[@]} module settings."
+
+	# Invoke the unified command-line build pipeline.
+	if _cmd_build "$toolchain_name"; then
+		log_info "Build completed successfully."
+		log_info "To upload the new binary, run: ${0##*/} upload <profile_name>"
+	else
+		log_error "Build failed. Check the log file: $MAIN_LOG_FILE"
+		exit 1
 	fi
-	build_prepare_toolchain "$toolchain_name"
-	_cmd_build "$toolchain_name"
+}
+
+# Helper to process a single CLI argument for the build command.
+_s3_process_cli_arg() {
+	local arg="$1"
+	# Module on/off commands
+	if [[ "$arg" =~ _on$ || "$arg" =~ _off$ ]]; then
+		module_configs+=("$arg")
+		return
+	fi
+
+	# Check if it's a USE_var
+	if [[ -v "USE_vars[$arg]" ]]; then
+		USE_vars["$arg"]="1"
+		log_debug "Setting USE_var: $arg=1"
+		return
+	fi
+
+	# If not handled, it's a general module config command
+	module_configs+=("$arg")
+}
+
+# --- Command-Line Action Handlers ---
+# These functions abstract the logic formerly in the main `case` statement.
+
+sys_toolchain_load() {
+	local toolchain_name="$1"
+	if [[ -z "$toolchain_name" ]]; then
+		log_error "Toolchain parameter missing for 'loadonly' command."
+		ui_show_help_toolchains
+		return 1
+	fi
+
+	if ! _sys_is_available_toolchain "$toolchain_name"; then
+		log_error "Toolchain '$toolchain_name' is not available."
+		return 1
+	fi
+	if ! _toolchain_install_archive "$toolchain_name" "install"; then
+		log_error "Failed to load toolchain '$toolchain_name'."
+		return 1
+	fi
+	log_info "Toolchain '$toolchain_name' has been loaded successfully."
+}
+
+sys_toolchain_check() {
+	local toolchain_name="$1"
+	if [[ -z "$toolchain_name" ]]; then
+		log_error "Toolchain parameter missing for 'tccheck' command."
+		return 1
+	fi
+
+	if ! _sys_is_available_toolchain "$toolchain_name"; then
+		log_error "Toolchain '$toolchain_name' is not available."
+		return 1
+	fi
+	if _toolchain_check "$toolchain_name"; then
+		log_info "Toolchain '$toolchain_name' check passed."
+	else
+		log_error "Toolchain '$toolchain_name' check failed. Please repair or reinstall."
+	fi
+}
+
+sys_toolchain_repair() {
+	local toolchain_name="$1"
+	if [[ -z "$toolchain_name" ]]; then
+		log_error "Toolchain parameter missing for 'tcrepair' command."
+		return 1
+	fi
+	if ! _sys_is_installed_toolchain "$toolchain_name"; then
+		log_error "Toolchain '$toolchain_name' is not installed."
+		return 1
+	fi
+	if ! validate_command "Repairing toolchain '$toolchain_name'" sys_repair_toolchain "$toolchain_name"; then log_fatal "Failed to repair toolchain '$toolchain_name'" "$EXIT_ERROR"; fi
+	sleep 2
+}
+
+sys_upload_cam() {
+	local profile_name="$1"
+	if [[ -z "$profile_name" ]]; then
+		log_info "No profile specified. Please provide a profile name (e.g., my_profile.ssh)."
+		sys_list_ssh_profiles
+	else
+		net_upload_cam_profile "$profile_name"
+	fi
+}
+
+sys_toolchain_edit_confdir() {
+	local toolchain_name="$1"
+	if ! _sys_is_installed_toolchain "$toolchain_name"; then
+		log_error "Toolchain '$toolchain_name' is not installed. Cannot edit its configuration."
+		return 1
+	fi
+	ui_edit_toolchain_confdir "$toolchain_name"
 }
 
 # check system #########################################################
+err_push_context "System Initialization"
 if ! sys_run_check; then
-	log_error "System prerequisite check failed. Please install missing packages and try again."
-	sleep 5 && bye
+	log_error "System prerequisite check failed. Please run './s3 syscheck auto now' to install missing packages."
+	sleep 5 && sys_exit
 fi
+err_pop_context
 ########################################################################
 
-_create_native_profile # put native datas to toolchains and configs
-_get_config_con "$1"   # echo $addons;exit;
-_create_module_arrays  # fill module arrays
-_fill_tc_array         # get # AVAI_TCLIST # INST_TCLIST # MISS_TCLIST
-_set_dialog_types      # fill $gui vars
-_systype               # check used uname
+sys_create_native_toolchain_profile # put native datas to toolchains and configs
+# If the action isn't one that works without a repository, populate module definitions.
+if [[ "$1" != "checkout" && "$1" != "clean" && "$1" != "repoclean" && "$1" != "reporestore" ]]; then
+	if ! sys_populate_module_and_use_vars; then
+		log_warn "Could not populate module definitions. Some features may be unavailable."
+	fi
+fi
+module_create_arrays         # fill module arrays
+toolchain_fill_arrays        # get # AVAI_TCLIST # INST_TCLIST # MISS_TCLIST
+systype=$(sys_get_arch_type) # check used uname
 
 if [ -z "$1" ]; then
-	[ "$(cfg_get_value "s3" "DIRECTMENU")" == "1" ] && _dialog_checkout && exit
+	[ "$(cfg_get_value "s3" "DIRECTMENU")" == "1" ] && repo_checkout_interactive && exit
 	ui_show_help
 	exit
 
 else
-	for e in "${s3opts[@]}"; do
+	cmd="$1"
+	shift
+	case "$cmd" in
+	# --- Core Commands ---
+	checkout)
+		repo_checkout "$@"
+		;;
+	clean)
+		repo_clean "$@"
+		;;
+	update)
+		repo_update "$@"
+		;;
+	menu)
+		ui_show_main_menu "$@"
+		;;
+	help)
+		ui_show_help
+		;;
+	version)
+		sys_show_version
+		;;
 
-		if [ "$e" == "$1" ]; then
+	# --- Repository Management ---
+	repoclean)
+		repo_clean "$@"
+		;;
+	repopatch)
+		patch_apply_console "$@"
+		;;
+	reporestore)
+		repo_restore "$@"
+		;;
 
-			case $e in
+	# --- Toolchain Management ---
+	loadonly)
+		sys_toolchain_load "$@"
+		;;
+	tccheck)
+		sys_toolchain_check "$@"
+		;;
+	tcrepair)
+		sys_toolchain_repair "$@"
+		;;
+	tedit)
+		sys_toolchain_edit_confdir "$@"
+		;;
 
-			checkout | reporestore)
-				if [ ! -n "$2" ]; then
-					eval "$e"
-				else
-					eval "$e" "$2"
-				fi
-				exit
-				;;
-			sys_update_self | sys_repair_self)
-				if ! validate_command "Executing $e" "$e"; then
-					log_fatal "$e operation failed." "$EXIT_ERROR"
-				fi
-				exit
-				;;
+	# --- System & Config ---
+	cedit)
+		sys_edit_s3_config "$@"
+		;;
+	lang_select) # DEPRECATED, handled by system menu
+		ui_menu_language_select "$@"
+		;;
+	profiles)
+		sys_show_profiles "$@"
+		;;
+	ssh_profiles | plugin_edit_ssh_profile)
+		plugin_edit_ssh_profile "$@"
+		;;
+	list_ssh_profiles)
+		list_ssh_profiles "$@"
+		;;
+	sys_update_self)
+		sys_update_self "$@"
+		;;
+	sys_repair_self)
+		sys_repair_self "$@"
+		;;
+	syscheck)
+		sys_run_checks_interactive "auto" "$@"
+		;;
+	sysinfo)
+		sys_show_info "$@"
+		;;
 
-			clean)
-				repo_clean
-				exit
-				;;
+	# --- Build & Upload ---
+	upload)
+		sys_upload_cam "$@"
+		;;
+	get_patch)
+		patch_download_from_urls "$@"
+		;;
 
-			menu)
-				if [ ! -n "$2" ]; then
-					ui_show_main_menu
-				else
-					ui_show_main_menu "$2" # Pass along arg if needed, though new menu may not use it
-				fi
-				;;
-
-			loadonly)
-				if [ ! -n "$2" ]; then
-					_nl
-					clear
-					s3logo
-					echo -e "$r_l\n  $txt_error: toolchain $txt_parameter $txt_missing\n""$w_l"
-					ui_show_help_toolchains
-					sleep 2
-					exit
-				else
-					for t in "${AVAI_TCLIST[@]}"; do
-						_tmp="$2"
-						[ "$t" == "$2" ] && _load_toolchain "$2" && break
-					done
-					if [ -f "$tc_dl" ]; then
-						echo -e "$p_l\n\n  toolchain for $_tmp loaded\n"
-					else
-						_nl
-						clear
-						s3logo
-						printf "$r_l  toolchain missing/error\n"
-					fi
-					exit
-				fi
-				;;
-
-			tccheck)
-				if [ ! -n "$2" ]; then
-					_nl
-					clear
-					s3logo
-					printf "$r_l\n  $txt_error: toolchain $txt_parameter $txt_missing\n""$w_l"
-					ui_show_help_toolchains
-					printf "$W"
-					sleep 2
-					exit
-				else
-					for t in "${AVAI_TCLIST[@]}"; do
-						[ "$t" == "$2" ] && _toolchain_check "$2" && break
-					done
-					_nl
-					clear
-					s3logo
-					printf "$r_l\n  toolchain missing/error\n$w_l"
-					ui_show_help_toolchains
-					echo -e "$W"
-					sleep 2
-					exit
-				fi
-				;;
-
-			tcrepair)
-				if [ ! -n "$2" ]; then
-					clear
-					s3logo
-					printf "$r_l\n  $txt_error: toolchain $txt_parameter $txt_missing\n""$w_l"
-					ui_show_help_toolchains
-					printf "$W"
-					sleep 2
-					exit
-				else
-					_nl
-					clear
-					sys_repair_toolchain "$2"
-					sleep 2
-					exit
-				fi
-				;;
-
-			upload)
-				if [ ! -n "$2" ]; then
-					_nl
-					clear
-					s3logo
-					echo -e "$r_l\n  $txt_error: $txt_parameter $txt_missing""$w_l"
-					menucall="yes" # This global seems to be part of the legacy flow
-					ssh_profiles
-				else
-					net_upload_cam_profile "$2"
-				fi
-				exit
-				;;
-
-			syscheck)
-				syscheck silent $2
-				exit
-				;;
-
-			tedit)
-				if [ -n "$2" ]; then
-					for telement in ${INST_TCLIST[@]}; do
-						if [ "$telement" == "$2" ]; then
-							toolchain_edit_confdir_menu "$2"
-							exit
-						fi
-					done
-					clear
-					s3logo
-					printf "$w_l\n  $2 toolchain not installed\n"$W
-				fi
-				exit
-				;;
-
-			help)
-				ui_show_help
-				exit
-				;;
-
-			cedit | clean | help | lang_select | menu | profiles | ssh_profiles | repoclean | repopatch | reporestore | sys_update_self | sys_repair_self | syscheck | sysinfo | tccheck | tcrepair | tedit | update | upload | version | tcupdate | list_ssh_profiles | ssh_editor)
-				shift && "$e" "$@"
-				exit
-				;;
-			esac
-
+	*)
+		# If the command is not a known option, check if it's a toolchain name
+		if [[ " ${AVAI_TCLIST[*]} " == *" $cmd "* ]]; then
+			_s3_run_cli_build "$cmd" "$@"
+		else
+			log_error "Unknown command: '$cmd'"
+			ui_show_help
 		fi
-	done
-
-	if [[ " ${AVAI_TCLIST[*]} " == *" $1 "* ]]; then
-		build_run_from_cli "$@"
-		exit
-	fi
-	ui_show_help
+		;;
+	esac
+	exit
 fi
 exit

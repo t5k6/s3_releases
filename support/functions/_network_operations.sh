@@ -24,28 +24,21 @@ net_ssh_execute() {
 	local remote_command="$2"
 	local port="${3:-$NET_SSH_PORT_DEFAULT}"
 
-	err_init "SSH execution to $user_host"
-
-	# Validate parameters
-	if [ -z "$user_host" ]; then
-		err_log_and_exit "User@host not specified" "$EXIT_INVALID_CONFIG"
-	fi
-
-	if [ -z "$remote_command" ]; then
-		err_log_and_exit "Remote command not specified" "$EXIT_INVALID_CONFIG"
+	if [[ -z "$user_host" || -z "$remote_command" ]]; then
+		log_error "net_ssh_execute requires user_host and remote_command."
+		return 1
 	fi
 
 	log_debug "Executing on $user_host (port $port): $remote_command"
 
-	# Execute command with proper error handling
+	# Execute command. The calling function is responsible for validation.
 	ssh -o BatchMode=yes \
 		-o ConnectTimeout="$NET_DEFAULT_TIMEOUT" \
 		-o StrictHostKeyChecking=no \
+		-o UserKnownHostsFile=/dev/null \
 		-p "$port" \
 		"$user_host" \
 		"$remote_command"
-
-	err_check_command_result "$?" "SSH execution: $remote_command"
 }
 
 net_scp_upload() {
@@ -55,30 +48,20 @@ net_scp_upload() {
 	local remote_path="$3"
 	local port="${4:-$NET_SSH_PORT_DEFAULT}"
 
-	err_init "SCP upload to $user_host"
-
-	# Validate parameters
-	err_validate_file_exists "$local_file" "SCP Upload"
-
-	if [ -z "$user_host" ]; then
-		err_log_and_exit "User@host not specified" "$EXIT_INVALID_CONFIG"
-	fi
-
-	if [ -z "$remote_path" ]; then
-		err_log_and_exit "Remote path not specified" "$EXIT_INVALID_CONFIG"
+	if [[ -z "$local_file" || -z "$user_host" || -z "$remote_path" ]]; then
+		log_error "net_scp_upload requires local_file, user_host, and remote_path."
+		return 1
 	fi
 
 	log_debug "Uploading $local_file to $user_host:$remote_path (port $port)"
 
-	# Upload file with error handling
 	scp -P "$port" \
 		-o BatchMode=yes \
 		-o ConnectTimeout="$NET_DEFAULT_TIMEOUT" \
 		-o StrictHostKeyChecking=no \
+		-o UserKnownHostsFile=/dev/null \
 		"$local_file" \
 		"$user_host:$remote_path"
-
-	err_check_command_result "$?" "SCP upload: $local_file to $remote_path"
 }
 
 net_scp_download() {
@@ -88,32 +71,20 @@ net_scp_download() {
 	local local_path="$3"
 	local port="${4:-$NET_SSH_PORT_DEFAULT}"
 
-	err_init "SCP download from $user_host"
-
-	# Validate parameters
-	if [ -z "$user_host" ]; then
-		err_log_and_exit "User@host not specified" "$EXIT_INVALID_CONFIG"
-	fi
-
-	if [ -z "$remote_file" ]; then
-		err_log_and_exit "Remote file not specified" "$EXIT_INVALID_CONFIG"
-	fi
-
-	if [ -z "$local_path" ]; then
-		err_log_and_exit "Local path not specified" "$EXIT_INVALID_CONFIG"
+	if [[ -z "$user_host" || -z "$remote_file" || -z "$local_path" ]]; then
+		log_error "net_scp_download requires user_host, remote_file, and local_path."
+		return 1
 	fi
 
 	log_debug "Downloading $user_host:$remote_file to $local_path (port $port)"
 
-	# Download file with error handling
 	scp -P "$port" \
 		-o BatchMode=yes \
 		-o ConnectTimeout="$NET_DEFAULT_TIMEOUT" \
 		-o StrictHostKeyChecking=no \
+		-o UserKnownHostsFile=/dev/null \
 		"$user_host:$remote_file" \
 		"$local_path"
-
-	err_check_command_result "$?" "SCP download: $remote_file to $local_path"
 }
 
 net_remote_file_exists() {
@@ -136,20 +107,20 @@ net_test_connection() {
 	local user_host="$1"
 	local port="${2:-$NET_SSH_PORT_DEFAULT}"
 
-	err_init "SSH connection test to $user_host"
-
-	if [ -z "$user_host" ]; then
-		err_log_and_exit "User@host not specified" "$EXIT_INVALID_CONFIG"
+	if [[ -z "$user_host" ]]; then
+		log_error "net_test_connection requires a user_host."
+		return 1
 	fi
 
 	log_debug "Testing SSH connection to $user_host:$port"
 
-	# Try simple echo command to test connection
+	# Try simple echo command to test connection. The return code of net_ssh_execute is passed through.
 	if net_ssh_execute "$user_host" "echo 'Connection test successful'" "$port" >/dev/null 2>&1; then
-		log_info "SSH connection to $user_host successful"
+		log_info "SSH connection to $user_host successful."
 		return 0
 	else
-		log_error "SSH connection to $user_host failed"
+		# The calling validate_command will log the failure, so we don't log "failed" here
+		# to avoid duplicate messages. We just return the error code.
 		return 1
 	fi
 }
@@ -159,10 +130,9 @@ net_check_url() {
 	local url="$1"
 	local timeout="${2:-$NET_DEFAULT_TIMEOUT}"
 
-	err_init "URL connectivity check for $url"
-
-	if [ -z "$url" ]; then
-		err_log_and_exit "URL not specified" "$EXIT_INVALID_CONFIG"
+	if [[ -z "$url" ]]; then
+		log_error "net_check_url requires a URL."
+		return 1
 	fi
 
 	log_debug "Checking connectivity to $url"
@@ -176,36 +146,27 @@ net_check_url() {
 		log_debug "URL is reachable: $url (HTTP status: $http_code)"
 		return 0
 	else
-		log_warn "$url is not reachable! (cURL exit: $curl_exit, HTTP status: $http_code)"
+		log_warn "URL is not reachable: $url (cURL exit: $curl_exit, HTTP status: $http_code)"
 		return 1
 	fi
 }
 
 net_download_file() {
+	err_push_context "net_download_file:$2"
 	# Download file from URL with progress display support
 	local url="$1"
 	local output_file="$2"
 	local progress_callback="${3:-}"
 
-	err_init "File download from $url"
-
-	# Validate parameters
-	if [ -z "$url" ]; then
-		err_log_and_exit "URL not specified" "$EXIT_INVALID_CONFIG"
-	fi
-
-	if [ -z "$output_file" ]; then
-		err_log_and_exit "Output file not specified" "$EXIT_INVALID_CONFIG"
+	if [[ -z "$url" || -z "$output_file" ]]; then
+		log_error "net_download_file requires a URL and output file path."
+		err_pop_context
+		return 1
 	fi
 
 	log_debug "Downloading $url to $output_file"
 
-	# Handle progress callback if provided
-	if [ -n "$progress_callback" ]; then
-		# Use custom progress display.
-		# The original implementation was flawed because `wget --progress=dot` does not produce
-		# a clean stream of numbers for `dialog --gauge`.
-		# This new implementation pipes wget's stderr through a parser that extracts percentages.
+	if [[ -n "$progress_callback" ]]; then
 		{ wget -O "$output_file" --progress=dot:giga "$url" 2>&1; } |
 			grep --line-buffered -o '[0-9]\+%' | sed -u 's/%//' | eval "$progress_callback"
 	else
@@ -213,8 +174,9 @@ net_download_file() {
 		wget --progress=bar:force -q --show-progress "$url" -O "$output_file"
 	fi
 
-	# Check the exit status of wget from the pipe
-	err_check_command_result "${PIPESTATUS[0]}" "File download: $url to $output_file"
+	local exit_code="${PIPESTATUS[0]}"
+	err_pop_context
+	return "$exit_code"
 }
 
 net_download_softcam_key() {
@@ -228,9 +190,19 @@ net_download_softcam_key() {
 		return 1
 	fi
 
+	# Abstraction: Get URL from the Unified Configuration Manager (UCM).
+	local softcam_url
+	softcam_url=$(cfg_get_value "urls" "URL_SOFTCAM_KEY")
+
+	if [[ -z "$softcam_url" ]]; then
+		log_error "URL for SoftCam.Key is not defined in the 'urls' configuration."
+		err_pop_context
+		return 1
+	fi
+
 	local dest_file="$dest_dir/SoftCam.Key"
-	if ! validate_command "Downloading SoftCam.Key" net_download_file "$URL_SOFTCAM_KEY" "$dest_file"; then
-		log_error "Failed to download SoftCam.Key from $URL_SOFTCAM_KEY"
+	if ! validate_command "Downloading SoftCam.Key" net_download_file "$softcam_url" "$dest_file"; then
+		log_error "Failed to download SoftCam.Key from $softcam_url"
 		err_pop_context
 		return 1
 	fi
@@ -299,6 +271,32 @@ net_get_openssl_versions() {
 		log_error "Could not retrieve OpenSSL versions. Check network or git installation."
 		return 1
 	fi
-
 	cat "$cache_file"
+}
+
+# Checks for GitHub API rate limiting.
+net_check_github_api_limit() {
+	local min_requests="$1"
+	local limit remaining reset reset_time
+	local api_reply_file
+	api_reply_file=$(mktemp)
+	trap 'rm -f "$api_reply_file"' RETURN
+
+	if ! validate_command "Querying GitHub API" curl --silent "${CURL_GITHUB_TOKEN:-}" "https://api.github.com/rate_limit" -o "$api_reply_file"; then
+		log_warn "Could not query GitHub API rate limit."
+		return 1 # Assume OK if check fails
+	fi
+
+	limit=$(jq -r '.resources.core.limit' "$api_reply_file")
+	remaining=$(jq -r '.resources.core.remaining' "$api_reply_file")
+	reset=$(jq -r '.resources.core.reset' "$api_reply_file")
+	reset_time=$(date -d @"$reset")
+
+	if [[ "$remaining" -lt "$min_requests" ]]; then
+		log_warn "GitHub API request limit is low ($remaining/$limit). You may be rate-limited. Limit resets at: $reset_time"
+		return 0 # 0 means limit is low (true)
+	else
+		log_debug "GitHub API limit is sufficient ($remaining/$limit)."
+		return 1 # 1 means limit is fine (false)
+	fi
 }
